@@ -301,7 +301,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
-          className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
+          className="fixed inset-0 z-50 bg-slate-950/35 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto"
         >
           <motion.div
             key="add-edit-dialog"
@@ -309,7 +309,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.92, y: 18 }}
             transition={{ type: 'spring', stiffness: 360, damping: 28 }}
-            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl w-full max-w-xl p-6 space-y-5 my-8 shadow-2xl"
+            className="glass-modal rounded-3xl w-full max-w-xl p-6 space-y-5 my-8"
           >
             <div className="flex items-center justify-between gap-4">
               <h2
@@ -324,14 +324,14 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                 whileTap={{ scale: 0.92 }}
                 onClick={onClose}
                 aria-label="モーダルを閉じる"
-                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800"
+                className="p-1.5 rounded-xl glass-btn text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
               >
                 <X className="w-4 h-4" aria-hidden="true" />
               </motion.button>
             </div>
 
             {!editingAccount && (
-              <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-lg">
+              <div className="grid grid-cols-3 gap-1 p-1 glass-subtle rounded-xl">
                 {(
                   [
                     { id: 'manual', label: '手動入力' },
@@ -348,7 +348,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                         if (item.id !== 'qr') stopCamera();
                         setEntryMode(item.id);
                       }}
-                      className={`relative px-3 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap ${
+                      className={`relative px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap ${
                         active
                           ? 'text-slate-900 dark:text-white'
                           : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
@@ -358,7 +358,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                         <motion.span
                           layoutId="add-edit-entry-tab"
                           transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-                          className="absolute inset-0 bg-white dark:bg-slate-900 rounded-md shadow-sm"
+                          className="absolute inset-0 bg-white/90 dark:bg-white/15 backdrop-blur-md rounded-lg shadow-sm border border-white/80 dark:border-white/15"
                         />
                       )}
                       <span className="relative z-10">{item.label}</span>
@@ -374,7 +374,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                   initial={{ opacity: 0, y: -6 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -6 }}
-                  className="p-3 rounded-lg bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 text-xs text-blue-800 dark:text-blue-200"
+                  className="p-3 rounded-xl bg-blue-500/12 border border-blue-400/35 text-xs text-blue-800 dark:text-blue-200 backdrop-blur-sm"
                 >
                   {infoMessage}
                 </motion.div>
@@ -389,7 +389,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                   animate={{ opacity: 1, x: [0, -4, 4, -2, 0] }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.28 }}
-                  className="p-3 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 text-xs text-red-700 dark:text-red-300"
+                  className="p-3 rounded-xl bg-red-500/12 border border-red-400/35 text-xs text-red-700 dark:text-red-300 backdrop-blur-sm"
                 >
                   {error}
                 </motion.div>
@@ -418,14 +418,14 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                     value={uriInput}
                     onChange={(e) => setUriInput(e.target.value)}
                     placeholder="otpauth://totp/GitHub:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub"
-                    className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                    className="w-full px-3 py-2 text-xs font-mono rounded-xl glass-input text-slate-900 dark:text-slate-100"
                   />
                   <motion.button
                     type="button"
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.96 }}
                     onClick={handleParseUri}
-                    className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold inline-flex items-center gap-1.5"
+                    className="px-4 py-2 rounded-xl glass-primary-btn text-xs font-semibold inline-flex items-center gap-1.5"
                   >
                     <Link2 className="w-3.5 h-3.5" aria-hidden="true" />
                     URIを解析してフォームに反映
@@ -444,13 +444,13 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                 >
                   <label
                     htmlFor="qr-image-upload"
-                    className="flex flex-col items-center justify-center gap-2 p-6 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-lg cursor-pointer hover:border-blue-500 transition-colors"
+                    className="flex flex-col items-center justify-center gap-2 p-6 glass-subtle border-2 border-dashed border-slate-400/50 dark:border-white/20 rounded-2xl cursor-pointer hover:border-blue-500/70 transition-colors"
                   >
-                    <ImageUp className="w-6 h-6 text-slate-500" aria-hidden="true" />
-                    <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                    <ImageUp className="w-6 h-6 text-slate-500 dark:text-slate-300" aria-hidden="true" />
+                    <span className="text-xs font-medium text-slate-700 dark:text-slate-200">
                       QRコードのスクリーンショット画像 (PNG / JPG) を選択
                     </span>
-                    <span className="text-[11px] text-slate-500">
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
                       画像はブラウザ内でローカル解析され、外部へ送信されません
                     </span>
                     <input
@@ -462,7 +462,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                     />
                   </label>
 
-                  <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <div className="flex items-center justify-between pt-3 border-t border-slate-900/8 dark:border-white/10">
                     <span className="text-xs text-slate-600 dark:text-slate-400">
                       カメラを使ってQRコードをスキャン
                     </span>
@@ -472,7 +472,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                         whileHover={{ scale: 1.03 }}
                         whileTap={{ scale: 0.96 }}
                         onClick={() => void startCameraScan()}
-                        className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1.5"
+                        className="px-3 py-1.5 rounded-xl glass-btn text-xs font-semibold text-slate-700 dark:text-slate-200 inline-flex items-center gap-1.5"
                       >
                         <Camera className="w-3.5 h-3.5" aria-hidden="true" />
                         カメラを起動
@@ -483,7 +483,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                         whileHover={{ scale: 1.03 }}
                         whileTap={{ scale: 0.96 }}
                         onClick={stopCamera}
-                        className="px-3 py-1.5 rounded-lg border border-red-300 text-red-600 text-xs font-semibold hover:bg-red-50"
+                        className="px-3 py-1.5 rounded-xl border border-red-400/50 bg-red-500/10 text-red-600 dark:text-red-300 text-xs font-semibold hover:bg-red-500/20"
                       >
                         カメラを停止
                       </motion.button>
@@ -531,7 +531,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                   value={issuer}
                   onChange={(e) => setIssuer(e.target.value)}
                   placeholder="例: GitHub, Google, AWS"
-                  className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  className="w-full px-3 py-2 text-sm rounded-xl glass-input text-slate-900 dark:text-slate-100"
                   required
                 />
               </div>
@@ -549,7 +549,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                   value={label}
                   onChange={(e) => setLabel(e.target.value)}
                   placeholder="例: dev@example.jp"
-                  className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  className="w-full px-3 py-2 text-sm rounded-xl glass-input text-slate-900 dark:text-slate-100"
                   required
                 />
               </div>
@@ -585,14 +585,14 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                   value={secret}
                   onChange={(e) => setSecret(e.target.value)}
                   placeholder="例: JBSWY3DPEHPK3PXP"
-                  className="w-full pl-3 pr-10 py-2 text-sm font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  className="w-full pl-3 pr-10 py-2 text-sm font-mono rounded-xl glass-input text-slate-900 dark:text-slate-100"
                   required
                 />
                 <button
                   type="button"
                   onClick={() => setShowSecret((v) => !v)}
                   aria-label={showSecret ? 'シークレットを隠す' : 'シークレットを表示'}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-500"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
                 >
                   {showSecret ? (
                     <EyeOff className="w-4 h-4" aria-hidden="true" />
@@ -615,7 +615,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                   id="acc-algo-select"
                   value={algorithm}
                   onChange={(e) => setAlgorithm(e.target.value as TotpAlgorithm)}
-                  className="w-full px-2.5 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+                  className="w-full px-2.5 py-2 text-xs rounded-xl glass-input text-slate-900 dark:text-slate-100 [&_option]:bg-white dark:[&_option]:bg-slate-900"
                 >
                   <option value="SHA-1">SHA-1</option>
                   <option value="SHA-256">SHA-256</option>
@@ -634,7 +634,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                   id="acc-digits-select"
                   value={digits}
                   onChange={(e) => setDigits(Number(e.target.value) === 8 ? 8 : 6)}
-                  className="w-full px-2.5 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+                  className="w-full px-2.5 py-2 text-xs rounded-xl glass-input text-slate-900 dark:text-slate-100 [&_option]:bg-white dark:[&_option]:bg-slate-900"
                 >
                   <option value={6}>6桁</option>
                   <option value={8}>8桁</option>
@@ -652,7 +652,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                   id="acc-period-select"
                   value={period}
                   onChange={(e) => setPeriod(Number(e.target.value) === 60 ? 60 : 30)}
-                  className="w-full px-2.5 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+                  className="w-full px-2.5 py-2 text-xs rounded-xl glass-input text-slate-900 dark:text-slate-100 [&_option]:bg-white dark:[&_option]:bg-slate-900"
                 >
                   <option value={30}>30秒</option>
                   <option value={60}>60秒</option>
@@ -673,7 +673,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                   value={folder}
                   onChange={(e) => setFolder(e.target.value)}
                   placeholder="仕事"
-                  className="w-full px-2.5 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+                  className="w-full px-2.5 py-2 text-xs rounded-xl glass-input text-slate-900 dark:text-slate-100"
                 />
                 <datalist id="folder-suggestions">
                   {existingFolders.map((f) => (
@@ -700,7 +700,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                 value={recoveryText}
                 onChange={(e) => setRecoveryText(e.target.value)}
                 placeholder={'例:\n8492a-19c04\n3f7b2-90e11'}
-                className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                className="w-full px-3 py-2 text-xs font-mono rounded-xl glass-input text-slate-900 dark:text-slate-100"
               />
             </div>
 
@@ -717,7 +717,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                 value={loginUrl}
                 onChange={(e) => setLoginUrl(e.target.value)}
                 placeholder="例: https://github.com/login (未入力でも主要サービスは自動判定)"
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                className="w-full px-3 py-2 text-xs rounded-xl glass-input text-slate-900 dark:text-slate-100"
               />
             </div>
 
@@ -734,7 +734,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 placeholder="用途やアカウント補足など"
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                className="w-full px-3 py-2 text-xs rounded-xl glass-input text-slate-900 dark:text-slate-100"
               />
             </div>
 
@@ -744,7 +744,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                 whileHover={{ scale: 1.03 }}
                 whileTap={{ scale: 0.96 }}
                 onClick={onClose}
-                className="px-4 py-2 text-xs font-semibold rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+                className="px-4 py-2 text-xs font-semibold rounded-xl glass-btn text-slate-700 dark:text-slate-200"
               >
                 キャンセル
               </motion.button>
@@ -753,7 +753,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                 disabled={saving}
                 whileHover={{ scale: saving ? 1 : 1.03 }}
                 whileTap={{ scale: saving ? 1 : 0.96 }}
-                className="px-5 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-70 text-white inline-flex items-center gap-2"
+                className="px-5 py-2 text-xs font-semibold rounded-xl glass-primary-btn disabled:opacity-70 inline-flex items-center gap-2"
               >
                 {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />}
                 {saving

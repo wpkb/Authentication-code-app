@@ -122,7 +122,7 @@ export const TotpCard: React.FC<TotpCardProps> = ({
         damping: 25,
         delay: Math.min(index * 0.04, 0.24),
       }}
-      className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 flex flex-col justify-between gap-4 hover:border-blue-300 dark:hover:border-blue-800 hover:shadow-md transition-colors"
+      className="glass-card rounded-2xl p-5 flex flex-col justify-between gap-4"
     >
       {/* Header Row */}
       <div className="flex items-start justify-between gap-3">
@@ -131,7 +131,7 @@ export const TotpCard: React.FC<TotpCardProps> = ({
             aria-hidden="true"
             whileHover={{ rotate: [0, -6, 6, 0] }}
             transition={{ duration: 0.35 }}
-            className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center text-sm font-bold text-slate-700 dark:text-slate-200 shrink-0"
+            className="w-10 h-10 rounded-xl glass-subtle flex items-center justify-center text-sm font-bold text-slate-800 dark:text-slate-100 shrink-0"
           >
             {account.issuer.slice(0, 2).toUpperCase()}
           </motion.div>
@@ -184,7 +184,7 @@ export const TotpCard: React.FC<TotpCardProps> = ({
           whileTap={{ scale: 0.95 }}
           onClick={() => void handleCopy()}
           aria-label={`${account.issuer} のワンタイムコード ${totp?.code ?? ''} をコピー`}
-          className="group text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded-lg px-2 py-1.5 -ml-2 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60"
+          className="group text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 rounded-xl px-2.5 py-1.5 -ml-2 transition-colors hover:bg-white/50 dark:hover:bg-white/10"
         >
           <div className="flex items-center gap-2.5 overflow-hidden">
             <AnimatePresence mode="popLayout" initial={false}>
@@ -253,7 +253,7 @@ export const TotpCard: React.FC<TotpCardProps> = ({
               r={radius}
               fill="none"
               strokeWidth="3"
-              className="stroke-slate-200 dark:stroke-slate-800"
+              className="stroke-slate-300/60 dark:stroke-white/12"
             />
             <circle
               cx="18"
@@ -282,10 +282,10 @@ export const TotpCard: React.FC<TotpCardProps> = ({
           onClick={() => void handleOneTapAutofill(false)}
           disabled={!totp?.code}
           aria-label={`${account.issuer} のコードをワンタップ自動入力`}
-          className={`flex-1 px-3 py-1.5 rounded-lg border text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap ${
+          className={`flex-1 px-3 py-1.5 rounded-xl border text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap backdrop-blur-md ${
             autofillReady
-              ? 'border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
-              : 'border-blue-200 dark:border-blue-900 bg-blue-50/70 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100/80 dark:hover:bg-blue-950/70'
+              ? 'border-emerald-400/60 bg-emerald-500/15 text-emerald-800 dark:text-emerald-300'
+              : 'border-blue-400/50 bg-blue-500/12 dark:bg-blue-400/14 text-blue-700 dark:text-blue-200 hover:bg-blue-500/20'
           }`}
         >
           {autofillReady ? (
@@ -311,7 +311,7 @@ export const TotpCard: React.FC<TotpCardProps> = ({
             onClick={() => void handleOneTapAutofill(true)}
             title={serviceDomain ? `${serviceDomain} を開いて自動入力準備` : 'ログイン画面を開く'}
             aria-label={`${account.issuer} のログインページを開いてOTP準備`}
-            className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1 whitespace-nowrap shrink-0 transition-colors"
+            className="glass-btn px-2.5 py-1.5 rounded-xl text-xs font-medium text-slate-700 dark:text-slate-100 inline-flex items-center gap-1 whitespace-nowrap shrink-0"
           >
             <span>ログイン</span>
             <ExternalLink className="w-3 h-3" aria-hidden="true" />
@@ -320,7 +320,7 @@ export const TotpCard: React.FC<TotpCardProps> = ({
       </div>
 
       {/* Unboxed Metadata + Actions Footer */}
-      <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
+      <div className="pt-3 border-t border-slate-900/8 dark:border-white/10 flex items-center justify-between gap-2">
         <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
           <span>{account.algorithm}</span>
           <span aria-hidden="true"> · </span>

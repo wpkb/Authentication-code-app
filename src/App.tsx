@@ -17,6 +17,7 @@ import {
   Menu,
   Moon,
   Plus,
+  ScanFace,
   Search,
   Server,
   ShieldAlert,
@@ -36,6 +37,17 @@ import { StartupLoadingModal, type StartupPhase } from './components/StartupLoad
 import { SyncBackupView } from './components/SyncBackupView';
 import { TotpCard } from './components/TotpCard';
 import { VaultAuthScreen } from './components/VaultAuthScreen';
+import {
+  clearAllBiometricKeys,
+  detectBiometricCapabilities,
+  enrollBiometricForVault,
+  getEnrolledBiometricVaultIds,
+  removeBiometricForVault,
+  syncEnrolledBiometricVaultIds,
+  updateBiometricVaultKey,
+  verifyAndLoadBiometricVaultKey,
+  type BiometricCapabilities,
+} from './crypto/biometricVault';
 import {
   clearAllTrustedKeys,
   clearAllTrustedKeysForUser,
@@ -89,6 +101,15 @@ type ActiveSection = 'all' | 'favorites' | 'autofill' | 'audit' | 'sync';
 const SESSION_ONLY_PREF_KEY = 'kv_session_only_lock';
 const SESSION_TAB_ALIVE_KEY = 'kv_session_tab_active';
 const SESSION_CLOSED_LOCK_KEY = 'kv_session_closed_lock';
+const LOCKED_STATE_KEY = 'kv_vault_locked';
+
+function readPersistedLockFlag(): boolean {
+  try {
+    return localStorage.getItem(LOCKED_STATE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
 
 interface ActiveCryptoSession {
   key: CryptoKey;
@@ -153,7 +174,7 @@ export default function App() {
 
   // Non-extractable CryptoKey session
   const activeKeyRef = useRef<ActiveCryptoSession | null>(null);
-  const manualLockRef = useRef<boolean>(false);
+  const manualLockRef = useRef<boolean>(readPersistedLockFlag());
   const vaultRef = useRef<VaultPayload | null>(null);
   vaultRef.current = vault;
   const trustDeviceRef = useRef<boolean>(trustDevice);
@@ -179,22 +200,59 @@ export default function App() {
   const [recoveryAccountId, setRecoveryAccountId] = useState<string | null>(null);
   const [deletingAccount, setDeletingAccount] = useState<TotpAccount | null>(null);
 
+  // WebAuthn Biometric / Face Authentication state
+  const [biometricVaultIds, setBiometricVaultIds] = useState<string[]>(() =>
+    getEnrolledBiometricVaultIds()
+  );
+  const [biometricCapabilities, setBiometricCapabilities] =
+    useState<BiometricCapabilities>({
+      supported: true,
+      platformAvailable: false,
+      inIframe: false,
+      rpId: '',
+    });
+  const [biometricEnrolling, setBiometricEnrolling] = useState<boolean>(false);
+  const [biometricBannerDismissed, setBiometricBannerDismissed] =
+    useState<boolean>(false);
+
   // Startup loading overlay state
   const isAutostartUrl =
     typeof window !== 'undefined' &&
     new URLSearchParams(window.location.search).get('autostart') === '1';
   const [startupPhase, setStartupPhase] = useState<StartupPhase>(
-    isAutostartUrl ? 'idle' : 'checking-auth'
+    isAutostartUrl || manualLockRef.current ? 'idle' : 'checking-auth'
   );
   const [startupDetail, setStartupDetail] = useState<string>(
     '認証セッションと保存先を確認しています'
   );
   const skipAutoUnlockRef = useRef<boolean>(false);
 
+  const markVaultLocked = useCallback(() => {
+    manualLockRef.current = true;
+    try {
+      localStorage.setItem(LOCKED_STATE_KEY, '1');
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const clearVaultLocked = useCallback(() => {
+    manualLockRef.current = false;
+    try {
+      localStorage.removeItem(LOCKED_STATE_KEY);
+    } catch {
+      // ignore
+    }
+  }, []);
+
   // Bottom Toast stack & Lock notice
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const toastTimersRef = useRef<Map<string, number>>(new Map());
-  const [lockNotice, setLockNotice] = useState<string | null>(null);
+  const [lockNotice, setLockNotice] = useState<string | null>(() =>
+    readPersistedLockFlag()
+      ? 'ボルトはロックされています。再アクセスするには顔認証またはマスターパスフレーズでロック解除してください。'
+      : null
+  );
 
   const dismissToast = useCallback((id: string) => {
     const existingTimer = toastTimersRef.current.get(id);
@@ -252,6 +310,22 @@ export default function App() {
     pushToast('待機をスキップしました。手動で操作できます。', 'info');
   }, [pushToast]);
 
+  // Detect WebAuthn platform biometric availability & sync enrolled vault IDs
+  useEffect(() => {
+    let active = true;
+    void Promise.all([
+      detectBiometricCapabilities(),
+      syncEnrolledBiometricVaultIds(),
+    ]).then(([caps, ids]) => {
+      if (!active) return;
+      setBiometricCapabilities(caps);
+      setBiometricVaultIds(ids);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // Firebase Auth listener + Trusted Device Auto-Unlock (mount once)
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -260,7 +334,8 @@ export default function App() {
 
       try {
         if (user) {
-          if (!skipAutoUnlockRef.current) {
+          const explicitlyLocked = manualLockRef.current || readPersistedLockFlag();
+          if (!skipAutoUnlockRef.current && !explicitlyLocked) {
             setStartupPhase('fetching-vaults');
             setStartupDetail(
               `${user.email || 'Googleアカウント'} の保存済みボルトを読み込み中...`
@@ -284,6 +359,7 @@ export default function App() {
 
           // Attempt trusted browser auto-unlock if not manually locked, skipped, or in Session Only mode
           if (
+            !explicitlyLocked &&
             !manualLockRef.current &&
             !vaultRef.current &&
             trustDeviceRef.current &&
@@ -366,7 +442,7 @@ export default function App() {
   }, [handleSelectStorageMode, pushToast]);
 
   const handleGoogleSignIn = async () => {
-    manualLockRef.current = false;
+    clearVaultLocked();
     skipAutoUnlockRef.current = false;
     setStartupPhase('signing-in');
     setStartupDetail('Googleアカウントを選択してログインしてください...');
@@ -393,6 +469,9 @@ export default function App() {
       await clearAllTrustedKeysForUser(uid);
       clearProfileSessionCache(uid);
     }
+    await clearAllBiometricKeys();
+    setBiometricVaultIds([]);
+    clearVaultLocked();
     await signOut(auth);
     activeKeyRef.current = null;
     setVault(null);
@@ -489,7 +568,7 @@ export default function App() {
       DEFAULT_PBKDF2_ITERATIONS
     );
     activeKeyRef.current = derived;
-    manualLockRef.current = false;
+    clearVaultLocked();
     lastActivityRef.current = Date.now();
     setLockNotice(null);
 
@@ -541,7 +620,7 @@ export default function App() {
       loaded.envelope.iterations
     );
     activeKeyRef.current = derived;
-    manualLockRef.current = false;
+    clearVaultLocked();
     lastActivityRef.current = Date.now();
     setLockNotice(null);
 
@@ -583,6 +662,99 @@ export default function App() {
     pushToast(`ボルト「${decrypted.vaultName}」をロック解除しました`, 'success');
   };
 
+  const handleEnrollBiometric = useCallback(async () => {
+    const currentVault = vaultRef.current;
+    const currentSession = activeKeyRef.current;
+    if (!currentVault || !currentSession) {
+      throw new Error('ボルトのロック解除後に顔認証を登録してください。');
+    }
+    setBiometricEnrolling(true);
+    try {
+      const updatedIds = await enrollBiometricForVault({
+        vaultId: currentVault.vaultId,
+        vaultName: currentVault.vaultName,
+        userEmail: googleUser?.email,
+        key: currentSession.key,
+        saltB64: currentSession.saltB64,
+        iterations: currentSession.iterations,
+      });
+      setBiometricVaultIds(updatedIds);
+      setBiometricBannerDismissed(false);
+      pushToast(
+        '顔認証ロック解除を登録しました。次回ロック時から顔認証でロック解除できます',
+        'success'
+      );
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : '顔認証の登録に失敗しました。';
+      pushToast(msg, 'error');
+      throw err;
+    } finally {
+      setBiometricEnrolling(false);
+    }
+  }, [googleUser, pushToast]);
+
+  const handleRemoveBiometric = useCallback(async () => {
+    const currentVault = vaultRef.current;
+    if (!currentVault) return;
+    const updatedIds = await removeBiometricForVault(currentVault.vaultId);
+    setBiometricVaultIds(updatedIds);
+    pushToast('この端末の顔認証ロック解除を解除しました', 'info');
+  }, [pushToast]);
+
+  const handleBiometricUnlock = useCallback(
+    async (targetVaultId: string, mode: StorageMode) => {
+      handleSelectStorageMode(mode);
+      const bioKey = await verifyAndLoadBiometricVaultKey(targetVaultId);
+      const loaded = await loadEncryptedVault(targetVaultId, mode, googleUser);
+      if (!loaded.envelope) {
+        throw new Error(`ボルト "${targetVaultId}" が見つかりませんでした。`);
+      }
+
+      let decrypted: VaultPayload;
+      try {
+        decrypted = await decryptVaultWithKey(loaded.envelope, bioKey.key);
+      } catch {
+        const nextIds = await removeBiometricForVault(targetVaultId);
+        setBiometricVaultIds(nextIds);
+        throw new Error(
+          'パスフレーズが変更されたため顔認証鍵をリセットしました。マスターパスフレーズで解除後、再登録してください。'
+        );
+      }
+
+      activeKeyRef.current = {
+        key: bioKey.key,
+        saltB64: bioKey.saltB64,
+        iterations: bioKey.iterations,
+      };
+      clearVaultLocked();
+      lastActivityRef.current = Date.now();
+      setLockNotice(null);
+      setVault(decrypted);
+      setPassphrase('');
+      setEnvelope(loaded.envelope);
+      setActiveVaultIdPref(decrypted.vaultId);
+      setInitialVaultId(decrypted.vaultId);
+      setSyncStatus({
+        savedTo:
+          loaded.source === 'cloud'
+            ? 'cloud+cookie'
+            : loaded.source === 'server'
+            ? 'server+cookie'
+            : 'cookie-only',
+        cloudSynced: loaded.source === 'cloud',
+        serverSynced: loaded.source === 'server',
+        cookieSynced: loaded.source === 'cookie',
+        cookieTier: 'cookie',
+        cookieBytes: JSON.stringify(loaded.envelope).length,
+      });
+      setActiveSection('all');
+      setSelectedFolder(null);
+      pushToast(`顔認証で「${decrypted.vaultName}」をロック解除しました`, 'success');
+    },
+    [googleUser, handleSelectStorageMode, clearVaultLocked, pushToast]
+  );
+
   const handleImportEnvelope = async (
     imported: EncryptedEnvelope,
     secretPassphrase: string
@@ -594,7 +766,7 @@ export default function App() {
       imported.iterations
     );
     activeKeyRef.current = derived;
-    manualLockRef.current = false;
+    clearVaultLocked();
     lastActivityRef.current = Date.now();
     setLockNotice(null);
 
@@ -624,7 +796,7 @@ export default function App() {
       DEFAULT_PBKDF2_ITERATIONS
     );
     activeKeyRef.current = derived;
-    manualLockRef.current = false;
+    clearVaultLocked();
     lastActivityRef.current = Date.now();
     setLockNotice(null);
 
@@ -642,22 +814,26 @@ export default function App() {
       })`,
       'success'
     );
-  }, [persistVault, storageMode, pushToast]);
+  }, [persistVault, storageMode, pushToast, clearVaultLocked]);
 
-  // ?autostart=1 support
+  // ?autostart=1 support (only runs if not explicitly locked, and strips autostart from URL so reloads stay locked)
   useEffect(() => {
     if (autostartRanRef.current) return;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('autostart') === '1') {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('autostart') === '1') {
       autostartRanRef.current = true;
-      void handleStartDemo();
+      url.searchParams.delete('autostart');
+      window.history.replaceState({}, '', url.toString());
+      if (!manualLockRef.current && !readPersistedLockFlag()) {
+        void handleStartDemo();
+      }
     }
   }, [handleStartDemo]);
 
-  // Lock vault cleanly (wipe plaintext state)
+  // Lock vault cleanly (wipe plaintext state and persist lock across reloads)
   const lockVault = useCallback(
     (reason?: 'manual' | 'auto' | 'session' | unknown, minutes?: number) => {
-      manualLockRef.current = true;
+      markVaultLocked();
       activeKeyRef.current = null;
       setVault(null);
       setPassphrase('');
@@ -671,20 +847,24 @@ export default function App() {
       if (reason === 'auto') {
         const msg = `${minutes ?? 15}分間操作がなかったため自動ロックしました。`;
         setLockNotice(
-          `${msg}「保存先・バックアップ」設定から自動ロック時間の延長や無効化を行えます。`
+          `${msg} 顔認証（登録済みの場合）またはマスターパスフレーズでロック解除できます。`
         );
         pushToast(msg, 'warning');
       } else if (reason === 'session') {
         void clearAllTrustedKeys();
+        void clearAllBiometricKeys();
+        setBiometricVaultIds([]);
         setLockNotice(
           '「離脱時自動ロック（Session Onlyモード）」が有効なため、ページ離脱・ブラウザ終了時にボルトを即時ロックしました。'
         );
       } else {
-        setLockNotice(null);
+        setLockNotice(
+          'ボルトを手動ロックしました。再アクセスするには顔認証（登録済みの場合）またはマスターパスフレーズを入力してください。'
+        );
         pushToast('ボルトを安全にロックしました', 'info');
       }
     },
-    [pushToast]
+    [pushToast, markVaultLocked]
   );
 
   // Detect fresh browser session after closing with Session Only Lock active
@@ -696,6 +876,8 @@ export default function App() {
 
       if (wasSessionOnly && (!hadTabSession || pendingClosedLock)) {
         void clearAllTrustedKeys();
+        void clearAllBiometricKeys();
+        setBiometricVaultIds([]);
         if (pendingClosedLock) {
           localStorage.removeItem(SESSION_CLOSED_LOCK_KEY);
           setLockNotice(
@@ -723,6 +905,7 @@ export default function App() {
         // ignore
       }
       void clearAllTrustedKeys();
+      void clearAllBiometricKeys();
       if (vaultRef.current || activeKeyRef.current) {
         lockVault('session');
       }
@@ -1078,6 +1261,13 @@ export default function App() {
       });
     }
 
+    if (biometricVaultIds.includes(vault.vaultId)) {
+      await updateBiometricVaultKey({
+        vaultId: vault.vaultId,
+        ...newSession,
+      });
+    }
+
     const nextVault = { ...vault, updatedAt: new Date().toISOString() };
     await persistVault(nextVault, newSession, (envelope.revision ?? 1) + 1);
     pushToast('マスターパスフレーズを変更し、ボルト全体を再暗号化しました', 'success');
@@ -1089,6 +1279,8 @@ export default function App() {
     if (googleUser) {
       await clearTrustedVaultKey(googleUser.uid, targetId);
     }
+    const updatedBioIds = await removeBiometricForVault(targetId);
+    setBiometricVaultIds(updatedBioIds);
     await deleteVaultEverywhere(targetId, googleUser);
     if (initialVaultId === targetId) {
       setActiveVaultIdPref(null);
@@ -1198,6 +1390,9 @@ export default function App() {
               onUnlockVault={handleUnlockVault}
               onImportEnvelope={handleImportEnvelope}
               onStartDemo={handleStartDemo}
+              biometricVaultIds={biometricVaultIds}
+              biometricCapabilities={biometricCapabilities}
+              onBiometricUnlock={handleBiometricUnlock}
               lockNotice={lockNotice}
               onDismissLockNotice={() => setLockNotice(null)}
               isDark={isDark}
@@ -1212,13 +1407,15 @@ export default function App() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.25 }}
-            className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 flex"
+            className="liquid-canvas min-h-screen text-slate-900 dark:text-slate-100 flex lg:gap-4 lg:p-4"
           >
             {/* Desktop Sidebar */}
-            <aside className="hidden lg:flex w-72 shrink-0 flex-col border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <ShieldCheck className="w-5 h-5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+            <aside className="hidden lg:flex w-72 shrink-0 flex-col glass-surface rounded-3xl h-[calc(100vh-2rem)] sticky top-4 overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-900/8 dark:border-white/10 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-xl glass-primary-btn flex items-center justify-center shrink-0">
+                    <ShieldCheck className="w-4 h-4 text-white" aria-hidden="true" />
+                  </div>
                   <span className="text-base font-bold tracking-tight">KagiVault</span>
                 </div>
                 <motion.button
@@ -1227,7 +1424,7 @@ export default function App() {
                   whileTap={{ scale: 0.92 }}
                   onClick={() => setIsDark((d) => !d)}
                   aria-label={isDark ? 'ライトテーマに切り替え' : 'ダークテーマに切り替え'}
-                  className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  className="p-1.5 rounded-xl glass-btn text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
                 >
                   {isDark ? (
                     <Sun className="w-4 h-4" aria-hidden="true" />
@@ -1237,7 +1434,7 @@ export default function App() {
                 </motion.button>
               </div>
 
-              <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 space-y-2">
+              <div className="px-4 py-3 border-b border-slate-900/8 dark:border-white/10 space-y-2">
                 <div>
                   <p className="text-xs font-semibold text-slate-900 dark:text-white truncate">
                     {vault.vaultName}
@@ -1247,7 +1444,7 @@ export default function App() {
                   </p>
                 </div>
                 {googleUser && (
-                  <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-900/8 dark:border-white/10">
                     <div className="flex items-center gap-2 min-w-0">
                       {googleUser.photoURL ? (
                         <img
@@ -1289,17 +1486,17 @@ export default function App() {
                     setActiveSection('all');
                     setSelectedFolder(null);
                   }}
-                  className={`relative w-full flex items-center justify-between px-3 py-2 text-xs font-semibold rounded-lg transition-colors ${
+                  className={`relative w-full flex items-center justify-between px-3 py-2 text-xs font-semibold rounded-xl transition-colors ${
                     activeSection === 'all' && !selectedFolder
-                      ? 'text-blue-700 dark:text-blue-300'
-                      : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                      ? 'text-blue-700 dark:text-blue-200'
+                      : 'text-slate-700 dark:text-slate-300 hover:bg-white/45 dark:hover:bg-white/6'
                   }`}
                 >
                   {activeSection === 'all' && !selectedFolder && (
                     <motion.span
                       layoutId="sidebar-nav-active"
                       transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-                      className="absolute inset-0 rounded-lg bg-blue-50 dark:bg-blue-950/60"
+                      className="absolute inset-0 rounded-xl bg-white/80 dark:bg-blue-500/20 backdrop-blur-md border border-white/80 dark:border-blue-400/25 shadow-sm"
                     />
                   )}
                   <span className="relative z-10 flex items-center gap-2.5">
@@ -1319,17 +1516,17 @@ export default function App() {
                     setActiveSection('favorites');
                     setSelectedFolder(null);
                   }}
-                  className={`relative w-full flex items-center justify-between px-3 py-2 text-xs font-semibold rounded-lg transition-colors ${
+                  className={`relative w-full flex items-center justify-between px-3 py-2 text-xs font-semibold rounded-xl transition-colors ${
                     activeSection === 'favorites'
-                      ? 'text-blue-700 dark:text-blue-300'
-                      : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                      ? 'text-blue-700 dark:text-blue-200'
+                      : 'text-slate-700 dark:text-slate-300 hover:bg-white/45 dark:hover:bg-white/6'
                   }`}
                 >
                   {activeSection === 'favorites' && (
                     <motion.span
                       layoutId="sidebar-nav-active"
                       transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-                      className="absolute inset-0 rounded-lg bg-blue-50 dark:bg-blue-950/60"
+                      className="absolute inset-0 rounded-xl bg-white/80 dark:bg-blue-500/20 backdrop-blur-md border border-white/80 dark:border-blue-400/25 shadow-sm"
                     />
                   )}
                   <span className="relative z-10 flex items-center gap-2.5">
@@ -1363,17 +1560,17 @@ export default function App() {
                               setActiveSection('all');
                               setSelectedFolder(folderName);
                             }}
-                            className={`relative w-full flex items-center justify-between px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                            className={`relative w-full flex items-center justify-between px-3 py-1.5 text-xs font-medium rounded-xl transition-colors ${
                               active
-                                ? 'text-blue-700 dark:text-blue-300'
-                                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                                ? 'text-blue-700 dark:text-blue-200'
+                                : 'text-slate-600 dark:text-slate-400 hover:bg-white/45 dark:hover:bg-white/6'
                             }`}
                           >
                             {active && (
                               <motion.span
                                 layoutId="sidebar-nav-active"
                                 transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-                                className="absolute inset-0 rounded-lg bg-blue-50 dark:bg-blue-950/60"
+                                className="absolute inset-0 rounded-xl bg-white/80 dark:bg-blue-500/20 backdrop-blur-md border border-white/80 dark:border-blue-400/25 shadow-sm"
                               />
                             )}
                             <span className="relative z-10 flex items-center gap-2 truncate">
@@ -1390,7 +1587,7 @@ export default function App() {
                   </div>
                 )}
 
-                <div className="pt-4 space-y-1 border-t border-slate-100 dark:border-slate-800">
+                <div className="pt-4 space-y-1 border-t border-slate-900/8 dark:border-white/10">
                   <motion.button
                     type="button"
                     whileHover={{ x: 2 }}
@@ -1399,17 +1596,17 @@ export default function App() {
                       setActiveSection('autofill');
                       setSelectedFolder(null);
                     }}
-                    className={`relative w-full flex items-center justify-between px-3 py-2 text-xs font-semibold rounded-lg transition-colors ${
+                    className={`relative w-full flex items-center justify-between px-3 py-2 text-xs font-semibold rounded-xl transition-colors ${
                       activeSection === 'autofill'
-                        ? 'text-blue-700 dark:text-blue-300'
-                        : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                        ? 'text-blue-700 dark:text-blue-200'
+                        : 'text-slate-700 dark:text-slate-300 hover:bg-white/45 dark:hover:bg-white/6'
                     }`}
                   >
                     {activeSection === 'autofill' && (
                       <motion.span
                         layoutId="sidebar-nav-active"
                         transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-                        className="absolute inset-0 rounded-lg bg-blue-50 dark:bg-blue-950/60"
+                        className="absolute inset-0 rounded-xl bg-white/80 dark:bg-blue-500/20 backdrop-blur-md border border-white/80 dark:border-blue-400/25 shadow-sm"
                       />
                     )}
                     <span className="relative z-10 flex items-center gap-2.5">
@@ -1426,17 +1623,17 @@ export default function App() {
                       setActiveSection('audit');
                       setSelectedFolder(null);
                     }}
-                    className={`relative w-full flex items-center justify-between px-3 py-2 text-xs font-semibold rounded-lg transition-colors ${
+                    className={`relative w-full flex items-center justify-between px-3 py-2 text-xs font-semibold rounded-xl transition-colors ${
                       activeSection === 'audit'
-                        ? 'text-blue-700 dark:text-blue-300'
-                        : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                        ? 'text-blue-700 dark:text-blue-200'
+                        : 'text-slate-700 dark:text-slate-300 hover:bg-white/45 dark:hover:bg-white/6'
                     }`}
                   >
                     {activeSection === 'audit' && (
                       <motion.span
                         layoutId="sidebar-nav-active"
                         transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-                        className="absolute inset-0 rounded-lg bg-blue-50 dark:bg-blue-950/60"
+                        className="absolute inset-0 rounded-xl bg-white/80 dark:bg-blue-500/20 backdrop-blur-md border border-white/80 dark:border-blue-400/25 shadow-sm"
                       />
                     )}
                     <span className="relative z-10 flex items-center gap-2.5">
@@ -1458,17 +1655,17 @@ export default function App() {
                       setActiveSection('sync');
                       setSelectedFolder(null);
                     }}
-                    className={`relative w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-lg transition-colors ${
+                    className={`relative w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-xl transition-colors ${
                       activeSection === 'sync'
-                        ? 'text-blue-700 dark:text-blue-300'
-                        : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                        ? 'text-blue-700 dark:text-blue-200'
+                        : 'text-slate-700 dark:text-slate-300 hover:bg-white/45 dark:hover:bg-white/6'
                     }`}
                   >
                     {activeSection === 'sync' && (
                       <motion.span
                         layoutId="sidebar-nav-active"
                         transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-                        className="absolute inset-0 rounded-lg bg-blue-50 dark:bg-blue-950/60"
+                        className="absolute inset-0 rounded-xl bg-white/80 dark:bg-blue-500/20 backdrop-blur-md border border-white/80 dark:border-blue-400/25 shadow-sm"
                       />
                     )}
                     <span className="relative z-10 flex items-center gap-2.5">
@@ -1479,7 +1676,7 @@ export default function App() {
                 </div>
               </nav>
 
-              <div className="p-4 border-t border-slate-200 dark:border-slate-800 space-y-3">
+              <div className="p-4 border-t border-slate-900/8 dark:border-white/10 space-y-3">
                 <div className="flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-400">
                   {syncStatus?.cloudSynced ? (
                     <Cloud className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" aria-hidden="true" />
@@ -1492,13 +1689,49 @@ export default function App() {
                 </div>
 
                 <div className="space-y-1.5">
+                  {biometricCapabilities.supported && (
+                    <motion.button
+                      type="button"
+                      data-testid="sidebar-biometric-btn"
+                      disabled={biometricEnrolling}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.96 }}
+                      onClick={() => {
+                        if (biometricVaultIds.includes(vault.vaultId)) {
+                          setActiveSection('sync');
+                          setSelectedFolder(null);
+                        } else {
+                          void handleEnrollBiometric().catch(() => {});
+                        }
+                      }}
+                      className={`w-full py-1.5 px-2.5 rounded-xl text-xs font-semibold inline-flex items-center justify-between gap-2 transition-colors ${
+                        biometricVaultIds.includes(vault.vaultId)
+                          ? 'glass-subtle border-emerald-500/45 text-emerald-700 dark:text-emerald-300'
+                          : 'glass-btn text-blue-700 dark:text-blue-300'
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                        <ScanFace className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                        <span>
+                          {biometricEnrolling
+                            ? '顔認証を登録中...'
+                            : biometricVaultIds.includes(vault.vaultId)
+                            ? '顔認証ロック解除: 有効'
+                            : '顔認証ロック解除を登録'}
+                        </span>
+                      </span>
+                      <span className="text-[10px] opacity-75 whitespace-nowrap">
+                        {biometricVaultIds.includes(vault.vaultId) ? '設定' : '登録'}
+                      </span>
+                    </motion.button>
+                  )}
                   <div className="flex items-stretch gap-2">
                     <motion.button
                       type="button"
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.96 }}
                       onClick={() => lockVault('manual')}
-                      className="flex-1 py-2 px-2.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
+                      className="flex-1 py-2 px-2.5 rounded-xl glass-btn text-xs font-semibold text-slate-700 dark:text-slate-200 inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
                     >
                       <Lock className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                       <span>今すぐロック</span>
@@ -1514,10 +1747,10 @@ export default function App() {
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.96 }}
                       onClick={() => void handleToggleSessionOnlyLock()}
-                      className={`flex-1 py-1.5 px-2.5 rounded-lg border text-left transition-colors flex items-center justify-between gap-1.5 shrink-0 ${
+                      className={`flex-1 py-1.5 px-2.5 rounded-xl text-left flex items-center justify-between gap-1.5 shrink-0 ${
                         sessionOnlyLock
-                          ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-200'
-                          : 'border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                          ? 'glass-subtle border-blue-500/70 bg-blue-500/15 dark:bg-blue-500/20 text-blue-700 dark:text-blue-200'
+                          : 'glass-btn text-slate-700 dark:text-slate-300'
                       }`}
                     >
                       <span className="min-w-0 leading-tight">
@@ -1533,7 +1766,7 @@ export default function App() {
                         className={`w-7 h-4 rounded-full p-0.5 transition-colors flex items-center shrink-0 ${
                           sessionOnlyLock
                             ? 'bg-blue-600 justify-end'
-                            : 'bg-slate-300 dark:bg-slate-700 justify-start'
+                            : 'bg-slate-400/50 dark:bg-white/20 justify-start'
                         }`}
                       >
                         <span className="w-3 h-3 rounded-full bg-white shadow-xs" />
@@ -1565,7 +1798,7 @@ export default function App() {
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.2 }}
-                  className="fixed inset-0 z-50 lg:hidden bg-slate-950/60 flex"
+                  className="fixed inset-0 z-50 lg:hidden bg-slate-950/35 backdrop-blur-md flex"
                 >
                   <motion.div
                     key="mobile-drawer-panel"
@@ -1573,7 +1806,7 @@ export default function App() {
                     animate={{ x: 0 }}
                     exit={{ x: -288 }}
                     transition={{ type: 'spring', stiffness: 360, damping: 32 }}
-                    className="w-72 bg-white dark:bg-slate-900 h-full p-5 flex flex-col justify-between shadow-2xl"
+                    className="w-72 glass-modal rounded-r-3xl h-full p-5 flex flex-col justify-between"
                   >
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
@@ -1582,13 +1815,13 @@ export default function App() {
                           type="button"
                           onClick={() => setMobileMenuOpen(false)}
                           aria-label="メニューを閉じる"
-                          className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+                          className="p-1.5 rounded-xl glass-btn"
                         >
                           <X className="w-4 h-4" aria-hidden="true" />
                         </button>
                       </div>
                       {googleUser && (
-                        <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800 text-xs truncate">
+                        <div className="p-2.5 rounded-xl glass-subtle text-xs truncate">
                           {googleUser.email}
                         </div>
                       )}
@@ -1600,7 +1833,7 @@ export default function App() {
                             setSelectedFolder(null);
                             setMobileMenuOpen(false);
                           }}
-                          className="w-full text-left px-3 py-2 text-sm font-medium rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+                          className="w-full text-left px-3 py-2 text-sm font-medium rounded-xl hover:bg-white/45 dark:hover:bg-white/10"
                         >
                           すべてのコード ({vault.accounts.length})
                         </button>
@@ -1611,7 +1844,7 @@ export default function App() {
                             setSelectedFolder(null);
                             setMobileMenuOpen(false);
                           }}
-                          className="w-full text-left px-3 py-2 text-sm font-medium rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+                          className="w-full text-left px-3 py-2 text-sm font-medium rounded-xl hover:bg-white/45 dark:hover:bg-white/10"
                         >
                           お気に入り
                         </button>
@@ -1622,7 +1855,7 @@ export default function App() {
                             setSelectedFolder(null);
                             setMobileMenuOpen(false);
                           }}
-                          className="w-full text-left px-3 py-2 text-sm font-medium rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+                          className="w-full text-left px-3 py-2 text-sm font-medium rounded-xl hover:bg-white/45 dark:hover:bg-white/10"
                         >
                           自動入力連携
                         </button>
@@ -1632,7 +1865,7 @@ export default function App() {
                             setActiveSection('audit');
                             setMobileMenuOpen(false);
                           }}
-                          className="w-full text-left px-3 py-2 text-sm font-medium rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+                          className="w-full text-left px-3 py-2 text-sm font-medium rounded-xl hover:bg-white/45 dark:hover:bg-white/10"
                         >
                           セキュリティ診断
                         </button>
@@ -1642,7 +1875,7 @@ export default function App() {
                             setActiveSection('sync');
                             setMobileMenuOpen(false);
                           }}
-                          className="w-full text-left px-3 py-2 text-sm font-medium rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+                          className="w-full text-left px-3 py-2 text-sm font-medium rounded-xl hover:bg-white/45 dark:hover:bg-white/10"
                         >
                           保存先・バックアップ
                         </button>
@@ -1650,10 +1883,44 @@ export default function App() {
                     </div>
 
                     <div className="space-y-2">
+                      {biometricCapabilities.supported && (
+                        <button
+                          type="button"
+                          disabled={biometricEnrolling}
+                          onClick={() => {
+                            if (biometricVaultIds.includes(vault.vaultId)) {
+                              setActiveSection('sync');
+                              setSelectedFolder(null);
+                              setMobileMenuOpen(false);
+                            } else {
+                              void handleEnrollBiometric().catch(() => {});
+                            }
+                          }}
+                          className={`w-full py-2 px-3 rounded-xl text-xs font-semibold inline-flex items-center justify-between gap-2 ${
+                            biometricVaultIds.includes(vault.vaultId)
+                              ? 'glass-subtle border-emerald-500/45 text-emerald-700 dark:text-emerald-300'
+                              : 'glass-btn text-blue-700 dark:text-blue-300'
+                          }`}
+                        >
+                          <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                            <ScanFace className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                            <span>
+                              {biometricEnrolling
+                                ? '顔認証を登録中...'
+                                : biometricVaultIds.includes(vault.vaultId)
+                                ? '顔認証ロック解除: 有効'
+                                : '顔認証ロック解除を登録'}
+                            </span>
+                          </span>
+                          <span className="text-[10px] opacity-75">
+                            {biometricVaultIds.includes(vault.vaultId) ? '設定' : '登録'}
+                          </span>
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => setIsDark((d) => !d)}
-                        className="w-full py-2 px-3 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold"
+                        className="w-full py-2 px-3 rounded-xl glass-btn text-xs font-semibold"
                       >
                         {isDark ? 'ライトテーマに切り替え' : 'ダークテーマに切り替え'}
                       </button>
@@ -1661,7 +1928,7 @@ export default function App() {
                         <button
                           type="button"
                           onClick={() => lockVault('manual')}
-                          className="flex-1 py-2 px-2.5 rounded-lg bg-slate-900 dark:bg-slate-800 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
+                          className="flex-1 py-2 px-2.5 rounded-xl glass-btn text-xs font-semibold inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
                         >
                           <Lock className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                           <span>今すぐロック</span>
@@ -1672,10 +1939,10 @@ export default function App() {
                           aria-checked={sessionOnlyLock}
                           aria-label="離脱時自動ロック（Session Onlyモード）"
                           onClick={() => void handleToggleSessionOnlyLock()}
-                          className={`flex-1 py-1.5 px-2.5 rounded-lg border text-left flex items-center justify-between gap-1.5 shrink-0 ${
+                          className={`flex-1 py-1.5 px-2.5 rounded-xl text-left flex items-center justify-between gap-1.5 shrink-0 ${
                             sessionOnlyLock
-                              ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-200'
-                              : 'border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                              ? 'glass-subtle border-blue-500/70 bg-blue-500/15 dark:bg-blue-500/20 text-blue-700 dark:text-blue-200'
+                              : 'glass-btn text-slate-700 dark:text-slate-300'
                           }`}
                         >
                           <span className="leading-tight">
@@ -1691,7 +1958,7 @@ export default function App() {
                             className={`w-7 h-4 rounded-full p-0.5 flex items-center shrink-0 ${
                               sessionOnlyLock
                                 ? 'bg-blue-600 justify-end'
-                                : 'bg-slate-300 dark:bg-slate-700 justify-start'
+                                : 'bg-slate-400/50 dark:bg-white/20 justify-start'
                             }`}
                           >
                             <span className="w-3 h-3 rounded-full bg-white shadow-xs" />
@@ -1702,7 +1969,7 @@ export default function App() {
                         <button
                           type="button"
                           onClick={() => void handleGoogleSignOut()}
-                          className="w-full py-2 px-3 rounded-lg border border-red-300 dark:border-red-900 text-red-600 dark:text-red-400 text-xs font-semibold"
+                          className="w-full py-2 px-3 rounded-xl border border-red-400/45 bg-red-500/10 text-red-600 dark:text-red-300 text-xs font-semibold"
                         >
                           Googleログアウト
                         </button>
@@ -1715,9 +1982,9 @@ export default function App() {
             </AnimatePresence>
 
             {/* Main Content Area */}
-            <div className="flex-1 flex flex-col min-w-0">
+            <div className="flex-1 flex flex-col min-w-0 lg:gap-4">
               {/* Top Bar Contract: 3 clean zones */}
-              <header className="sticky top-0 z-30 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-3.5 flex items-center justify-between gap-3 sm:gap-6">
+              <header className="sticky top-0 lg:top-4 z-30 glass-surface lg:rounded-2xl px-4 sm:px-6 py-3.5 flex items-center justify-between gap-3 sm:gap-6">
                 <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
                   <motion.button
                     type="button"
@@ -1725,7 +1992,7 @@ export default function App() {
                     whileTap={{ scale: 0.94 }}
                     onClick={() => setMobileMenuOpen(true)}
                     aria-label="ナビゲーションメニューを開く"
-                    className="lg:hidden p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 shrink-0"
+                    className="lg:hidden p-1.5 rounded-xl glass-btn shrink-0"
                   >
                     <Menu className="w-4 h-4" aria-hidden="true" />
                   </motion.button>
@@ -1744,7 +2011,7 @@ export default function App() {
                   {(activeSection === 'all' || activeSection === 'favorites') && (
                     <div className="relative w-full">
                       <Search
-                        className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2"
+                        className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
                         aria-hidden="true"
                       />
                       <input
@@ -1753,7 +2020,7 @@ export default function App() {
                         onChange={(e) => setSearchQuery(e.target.value)}
                         placeholder="サービス名・アカウント名・フォルダで検索..."
                         aria-label="認証アカウントを検索"
-                        className="w-full pl-9 pr-3 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                        className="w-full pl-9 pr-3 py-1.5 text-sm rounded-xl glass-input text-slate-900 dark:text-slate-100"
                       />
                     </div>
                   )}
@@ -1768,7 +2035,7 @@ export default function App() {
                       setEditingAccount(null);
                       setAddModalOpen(true);
                     }}
-                    className="px-3 sm:px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                    className="px-3.5 sm:px-4 py-2 text-xs font-semibold rounded-xl glass-primary-btn inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
                   >
                     <Plus className="w-4 h-4" aria-hidden="true" />
                     <span>アカウント追加</span>
@@ -1776,12 +2043,12 @@ export default function App() {
                 </div>
               </header>
 
-              <main className="flex-1 max-w-6xl w-full mx-auto px-6 py-6 space-y-6">
+              <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 lg:px-2 py-5 lg:py-2 space-y-6">
                 {/* Mobile search bar */}
                 {(activeSection === 'all' || activeSection === 'favorites') && (
                   <div className="md:hidden relative">
                     <Search
-                      className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2"
+                      className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
                       aria-hidden="true"
                     />
                     <input
@@ -1790,10 +2057,62 @@ export default function App() {
                       onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder="サービス名・アカウント名で検索..."
                       aria-label="認証アカウントを検索"
-                      className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
+                      className="w-full pl-9 pr-3 py-2 text-sm rounded-xl glass-input text-slate-900 dark:text-slate-100"
                     />
                   </div>
                 )}
+
+                {/* Dismissible Biometric Enrollment Banner when platform auth is ready and not enrolled */}
+                <AnimatePresence>
+                  {biometricCapabilities.supported &&
+                    biometricCapabilities.platformAvailable &&
+                    !biometricVaultIds.includes(vault.vaultId) &&
+                    !biometricBannerDismissed &&
+                    activeSection !== 'sync' && (
+                      <motion.div
+                        key="biometric-enroll-banner"
+                        initial={{ opacity: 0, y: -8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -8 }}
+                        className="glass-surface rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-blue-400/35 bg-blue-500/8"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-9 h-9 rounded-xl glass-primary-btn flex items-center justify-center shrink-0">
+                            <ScanFace className="w-4 h-4 text-white" aria-hidden="true" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-slate-900 dark:text-white">
+                              ロック解除を顔認証・生体認証に対応させる
+                            </p>
+                            <p className="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5">
+                              一度ロックされた後も、Face ID / Windows Hello でスムーズにロック解除できます。
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <motion.button
+                            type="button"
+                            data-testid="enroll-biometric-banner-btn"
+                            disabled={biometricEnrolling}
+                            whileHover={{ scale: biometricEnrolling ? 1 : 1.03 }}
+                            whileTap={{ scale: biometricEnrolling ? 1 : 0.96 }}
+                            onClick={() => void handleEnrollBiometric().catch(() => {})}
+                            className="px-3.5 py-2 text-xs font-semibold rounded-xl glass-primary-btn disabled:opacity-70 inline-flex items-center gap-1.5 whitespace-nowrap"
+                          >
+                            <ScanFace className="w-3.5 h-3.5" aria-hidden="true" />
+                            <span>{biometricEnrolling ? '登録中...' : '顔認証を登録'}</span>
+                          </motion.button>
+                          <button
+                            type="button"
+                            onClick={() => setBiometricBannerDismissed(true)}
+                            className="px-2.5 py-2 text-xs font-medium rounded-xl glass-btn text-slate-600 dark:text-slate-300 whitespace-nowrap"
+                          >
+                            あとで
+                          </button>
+                        </div>
+                      </motion.div>
+                    )}
+                </AnimatePresence>
 
                 <AnimatePresence mode="wait">
                   {(activeSection === 'all' || activeSection === 'favorites') && (
@@ -1809,10 +2128,10 @@ export default function App() {
                           initial={{ opacity: 0, scale: 0.97 }}
                           animate={{ opacity: 1, scale: 1 }}
                           transition={{ type: 'spring', stiffness: 320, damping: 26 }}
-                          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-10 text-center space-y-4"
+                          className="glass-surface rounded-2xl p-10 text-center space-y-4"
                         >
-                          <div className="w-12 h-12 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto">
-                            <KeyRound className="w-6 h-6 text-slate-500" aria-hidden="true" />
+                          <div className="w-12 h-12 rounded-2xl glass-subtle flex items-center justify-center mx-auto">
+                            <KeyRound className="w-6 h-6 text-slate-500 dark:text-slate-300" aria-hidden="true" />
                           </div>
                           <div className="space-y-1 max-w-md mx-auto">
                             <h2 className="text-base font-bold text-slate-900 dark:text-white">
@@ -1835,7 +2154,7 @@ export default function App() {
                                 setEditingAccount(null);
                                 setAddModalOpen(true);
                               }}
-                              className="px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white inline-flex items-center gap-1.5"
+                              className="px-4 py-2 text-xs font-semibold rounded-xl glass-primary-btn inline-flex items-center gap-1.5"
                             >
                               <Plus className="w-4 h-4" aria-hidden="true" />
                               最初のアカウントを追加
@@ -1925,6 +2244,10 @@ export default function App() {
                         onChangeAutoLock={handleChangeAutoLock}
                         onChangePassphrase={handleChangePassphrase}
                         onDeleteVault={handleDeleteVault}
+                        isBiometricEnrolled={biometricVaultIds.includes(vault.vaultId)}
+                        biometricCapabilities={biometricCapabilities}
+                        onEnrollBiometric={handleEnrollBiometric}
+                        onRemoveBiometric={handleRemoveBiometric}
                         onToast={pushToast}
                       />
                     </motion.div>
@@ -1973,7 +2296,7 @@ export default function App() {
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.2 }}
-                  className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4"
+                  className="fixed inset-0 z-50 bg-slate-950/35 backdrop-blur-md flex items-center justify-center p-4"
                 >
                   <motion.div
                     key="delete-acc-dialog"
@@ -1981,7 +2304,7 @@ export default function App() {
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.92, y: 14 }}
                     transition={{ type: 'spring', stiffness: 360, damping: 28 }}
-                    className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl w-full max-w-sm p-6 space-y-4 shadow-2xl"
+                    className="glass-modal rounded-3xl w-full max-w-sm p-6 space-y-4"
                   >
                     <h2
                       id="delete-acc-title"
@@ -1998,7 +2321,7 @@ export default function App() {
                         whileHover={{ scale: 1.03 }}
                         whileTap={{ scale: 0.96 }}
                         onClick={() => setDeletingAccount(null)}
-                        className="px-3 py-2 text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700"
+                        className="px-3.5 py-2 text-xs font-medium rounded-xl glass-btn text-slate-700 dark:text-slate-200"
                       >
                         キャンセル
                       </motion.button>
@@ -2007,7 +2330,7 @@ export default function App() {
                         whileHover={{ scale: 1.03 }}
                         whileTap={{ scale: 0.96 }}
                         onClick={() => void handleConfirmDeleteAccount()}
-                        className="px-4 py-2 text-xs font-semibold rounded-lg bg-red-600 hover:bg-red-700 text-white"
+                        className="px-4 py-2 text-xs font-semibold rounded-xl bg-red-600 hover:bg-red-700 text-white"
                       >
                         削除する
                       </motion.button>

@@ -27,28 +27,28 @@ const TONE_STYLES: Record<
   success: {
     icon: CheckCircle2,
     container:
-      'bg-slate-900 dark:bg-slate-800 text-white border-emerald-500/40 dark:border-emerald-500/50',
+      'bg-slate-900/80 dark:bg-slate-900/75 text-white border-emerald-400/35',
     iconClass: 'text-emerald-400',
     barClass: 'bg-emerald-400',
   },
   info: {
     icon: Info,
     container:
-      'bg-slate-900 dark:bg-slate-800 text-white border-blue-500/40 dark:border-blue-500/50',
+      'bg-slate-900/80 dark:bg-slate-900/75 text-white border-blue-400/35',
     iconClass: 'text-blue-400',
     barClass: 'bg-blue-400',
   },
   warning: {
     icon: AlertTriangle,
     container:
-      'bg-amber-950 dark:bg-amber-950 text-amber-50 border-amber-500/50',
+      'bg-amber-950/82 text-amber-50 border-amber-400/40',
     iconClass: 'text-amber-400',
     barClass: 'bg-amber-400',
   },
   error: {
     icon: ShieldAlert,
     container:
-      'bg-red-950 dark:bg-red-950 text-red-50 border-red-500/50',
+      'bg-red-950/82 text-red-50 border-red-400/40',
     iconClass: 'text-red-400',
     barClass: 'bg-red-400',
   },
@@ -76,7 +76,7 @@ export const BottomToastHost: React.FC<BottomToastHostProps> = ({
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 20, scale: 0.9 }}
               transition={{ type: 'spring', stiffness: 420, damping: 28 }}
-              className={`pointer-events-auto relative overflow-hidden w-full max-w-md rounded-xl border px-4 py-3 shadow-xl flex items-center justify-between gap-3 ${style.container}`}
+              className={`glass-toast pointer-events-auto relative overflow-hidden w-full max-w-md rounded-2xl border px-4 py-3 flex items-center justify-between gap-3 ${style.container}`}
             >
               <div className="flex items-center gap-2.5 min-w-0">
                 <motion.div

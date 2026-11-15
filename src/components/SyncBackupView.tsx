@@ -8,10 +8,12 @@ import {
   KeyRound,
   Loader2,
   RefreshCw,
+  ScanFace,
   Server,
   ShieldCheck,
   Trash2,
 } from 'lucide-react';
+import type { BiometricCapabilities } from '../crypto/biometricVault';
 import { buildOtpAuthUri } from '../crypto/totp';
 import { evaluatePassphraseStrength } from '../crypto/vaultCrypto';
 import type { ServerHealthStatus } from '../storage/vaultStorage';
@@ -38,6 +40,10 @@ interface SyncBackupViewProps {
   onChangeAutoLock: (minutes: number) => Promise<void>;
   onChangePassphrase: (currentPassphrase: string, newPassphrase: string) => Promise<void>;
   onDeleteVault: () => Promise<void>;
+  isBiometricEnrolled: boolean;
+  biometricCapabilities: BiometricCapabilities;
+  onEnrollBiometric: () => Promise<void>;
+  onRemoveBiometric: () => Promise<void>;
   onToast?: (message: string, tone?: ToastTone) => void;
 }
 
@@ -56,6 +62,10 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
   onChangeAutoLock,
   onChangePassphrase,
   onDeleteVault,
+  isBiometricEnrolled,
+  biometricCapabilities,
+  onEnrollBiometric,
+  onRemoveBiometric,
   onToast,
 }) => {
   const [currentPass, setCurrentPass] = useState('');
@@ -66,6 +76,8 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
   const [changingPass, setChangingPass] = useState(false);
 
   const [syncing, setSyncing] = useState(false);
+  const [biometricBusy, setBiometricBusy] = useState(false);
+  const [biometricError, setBiometricError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [plainExportConfirm, setPlainExportConfirm] = useState(false);
 
@@ -142,7 +154,7 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ type: 'spring', stiffness: 320, damping: 26 }}
-        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-5"
+        className="glass-surface rounded-2xl p-6 space-y-5"
       >
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
@@ -159,7 +171,7 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
             whileTap={{ scale: syncing ? 1 : 0.96 }}
             onClick={() => void handleManualSync()}
             disabled={syncing}
-            className="px-4 py-2 text-xs font-semibold rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 whitespace-nowrap self-start"
+            className="px-4 py-2 text-xs font-semibold rounded-xl glass-btn text-slate-700 dark:text-slate-200 inline-flex items-center gap-1.5 whitespace-nowrap self-start"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} aria-hidden="true" />
             {syncing ? '暗号化同期を実行中...' : '今すぐ暗号化同期'}
@@ -204,23 +216,23 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
                 whileHover={{ scale: opt.disabled ? 1 : 1.02 }}
                 whileTap={{ scale: opt.disabled ? 1 : 0.97 }}
                 onClick={() => void onChangeStorageMode(opt.id)}
-                className={`relative p-4 rounded-xl border text-left transition-colors disabled:opacity-50 ${
+                className={`relative p-4 rounded-2xl text-left transition-colors disabled:opacity-50 ${
                   active
-                    ? 'border-blue-600 bg-blue-50/70 dark:bg-blue-950/40 dark:border-blue-500'
-                    : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                    ? 'glass-subtle bg-blue-500/12 dark:bg-blue-500/16 border-blue-500/60'
+                    : 'glass-subtle hover:bg-white/70 dark:hover:bg-white/10'
                 }`}
               >
                 {active && (
                   <motion.span
                     layoutId="sync-storage-mode-active"
                     transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-                    className="absolute inset-0 rounded-xl border-2 border-blue-600/70 dark:border-blue-400/70 pointer-events-none"
+                    className="absolute inset-0 rounded-2xl border-2 border-blue-500/75 dark:border-blue-400/75 pointer-events-none"
                   />
                 )}
                 <p className="text-xs font-semibold text-slate-900 dark:text-white">
                   {opt.title}
                 </p>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
                   {opt.desc}
                 </p>
               </motion.button>
@@ -229,8 +241,8 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
         </div>
 
         {!googleUser && (
-          <div className="p-4 rounded-xl border border-blue-200 dark:border-blue-900 bg-blue-50/50 dark:bg-blue-950/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="text-xs text-slate-700 dark:text-slate-300">
+          <div className="p-4 rounded-2xl border border-blue-400/35 bg-blue-500/10 backdrop-blur-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="text-xs text-slate-700 dark:text-slate-200">
               Googleアカウントでログインすると、現在のボルトをそのままクラウドへ同期できます。
             </div>
             <motion.button
@@ -238,14 +250,14 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
               whileHover={{ scale: 1.03 }}
               whileTap={{ scale: 0.96 }}
               onClick={() => void onGoogleSignIn()}
-              className="px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white whitespace-nowrap self-start"
+              className="px-4 py-2 text-xs font-semibold rounded-xl glass-primary-btn whitespace-nowrap self-start"
             >
               Googleでログインして同期
             </motion.button>
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 pt-3 border-t border-slate-100 dark:border-slate-800 text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 pt-3 border-t border-slate-900/8 dark:border-white/10 text-xs">
           <div className="flex items-start gap-2.5">
             <Cloud className="w-4 h-4 text-blue-600 dark:text-blue-400 mt-0.5 shrink-0" aria-hidden="true" />
             <div>
@@ -302,7 +314,7 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ type: 'spring', stiffness: 320, damping: 26, delay: 0.06 }}
-          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-4"
+          className="glass-surface rounded-2xl p-6 space-y-4"
         >
           <h2 className="text-base font-bold text-slate-900 dark:text-white">
             バックアップのエクスポート
@@ -317,7 +329,7 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
               whileHover={{ scale: 1.03 }}
               whileTap={{ scale: 0.96 }}
               onClick={handleDownloadEncryptedBackup}
-              className="px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white inline-flex items-center gap-1.5"
+              className="px-4 py-2 text-xs font-semibold rounded-xl glass-primary-btn inline-flex items-center gap-1.5"
             >
               <Download className="w-3.5 h-3.5" aria-hidden="true" />
               暗号化バックアップを保存 (.json)
@@ -334,7 +346,7 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
                   whileHover={{ scale: 1.03 }}
                   whileTap={{ scale: 0.96 }}
                   onClick={() => setPlainExportConfirm(true)}
-                  className="px-3 py-2 text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                  className="px-3 py-2 text-xs font-medium rounded-xl glass-btn text-slate-700 dark:text-slate-200"
                 >
                   他アプリ移行用 URI 出力
                 </motion.button>
@@ -344,9 +356,9 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -8 }}
-                  className="w-full p-3 rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/40 space-y-2"
+                  className="w-full p-3 rounded-xl border border-amber-400/45 bg-amber-500/12 backdrop-blur-sm space-y-2"
                 >
-                  <p className="text-xs text-amber-800 dark:text-amber-200">
+                  <p className="text-xs text-amber-900 dark:text-amber-200">
                     注意: otpauth URIリストは暗号化されていないシークレットを含みます。出力しますか？
                   </p>
                   <div className="flex items-center gap-2">
@@ -355,14 +367,14 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
                       whileHover={{ scale: 1.03 }}
                       whileTap={{ scale: 0.96 }}
                       onClick={handleDownloadPlaintextUris}
-                      className="px-3 py-1.5 text-xs font-semibold rounded-md bg-amber-600 text-white hover:bg-amber-700"
+                      className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-600 text-white hover:bg-amber-700"
                     >
                       理解してダウンロード
                     </motion.button>
                     <button
                       type="button"
                       onClick={() => setPlainExportConfirm(false)}
-                      className="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-300 dark:border-slate-700"
+                      className="px-3 py-1.5 text-xs font-medium rounded-lg glass-btn text-slate-700 dark:text-slate-200"
                     >
                       キャンセル
                     </button>
@@ -377,14 +389,14 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ type: 'spring', stiffness: 320, damping: 26, delay: 0.1 }}
-          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-4"
+          className="glass-surface rounded-2xl p-6 space-y-4"
         >
           <h2 className="text-base font-bold text-slate-900 dark:text-white">
             端末の信頼設定と自動ロック
           </h2>
 
           {googleUser && (
-            <label className="flex items-start gap-2.5 cursor-pointer select-none pb-3 border-b border-slate-100 dark:border-slate-800">
+            <label className="flex items-start gap-2.5 cursor-pointer select-none pb-3 border-b border-slate-900/8 dark:border-white/10">
               <input
                 type="checkbox"
                 checked={trustDevice}
@@ -408,7 +420,7 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
               id="autolock-select"
               value={vault.autoLockMinutes}
               onChange={(e) => void onChangeAutoLock(Number(e.target.value))}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+              className="w-full px-3 py-2 text-sm rounded-xl glass-input text-slate-900 dark:text-slate-100 [&_option]:bg-white dark:[&_option]:bg-slate-900"
             >
               <option value={1}>1分 (高セキュリティ)</option>
               <option value={5}>5分</option>
@@ -418,6 +430,96 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
               <option value={0}>無効 (手動ロックのみ)</option>
             </select>
           </div>
+
+          <div className="pt-3 border-t border-slate-900/8 dark:border-white/10 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-2.5 min-w-0">
+                <ScanFace className="w-4 h-4 text-blue-600 dark:text-blue-400 mt-0.5 shrink-0" aria-hidden="true" />
+                <div>
+                  <h3 className="text-xs font-bold text-slate-900 dark:text-white">
+                    顔認証・生体認証ロック解除 (WebAuthn)
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
+                    {isBiometricEnrolled
+                      ? '登録済み — 手動ロックや自動ロック後に、端末の顔認証・生体認証 (Face ID / Windows Hello) で再解除できます。'
+                      : '一度ロックされた後、マスターパスフレーズを再入力せずに端末の顔認証・生体認証でロック解除できるよう登録します。'}
+                  </p>
+                </div>
+              </div>
+              <span
+                className={`text-[11px] font-semibold whitespace-nowrap shrink-0 ${
+                  isBiometricEnrolled
+                    ? 'text-emerald-700 dark:text-emerald-400'
+                    : 'text-slate-500 dark:text-slate-400'
+                }`}
+              >
+                {isBiometricEnrolled ? '登録済み' : '未登録'}
+              </span>
+            </div>
+
+            {biometricError && (
+              <p className="text-xs text-red-600 dark:text-red-400">{biometricError}</p>
+            )}
+
+            {!biometricCapabilities.supported ? (
+              <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                現在のブラウザは WebAuthn プラットフォーム生体認証に対応していません。
+              </p>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <motion.button
+                  type="button"
+                  data-testid="enroll-biometric-settings-btn"
+                  disabled={biometricBusy}
+                  whileHover={{ scale: biometricBusy ? 1 : 1.02 }}
+                  whileTap={{ scale: biometricBusy ? 1 : 0.97 }}
+                  onClick={async () => {
+                    setBiometricError('');
+                    setBiometricBusy(true);
+                    try {
+                      await onEnrollBiometric();
+                    } catch (err) {
+                      setBiometricError(
+                        err instanceof Error ? err.message : '顔認証の登録に失敗しました。'
+                      );
+                    } finally {
+                      setBiometricBusy(false);
+                    }
+                  }}
+                  className="px-3.5 py-2 text-xs font-semibold rounded-xl glass-primary-btn disabled:opacity-70 inline-flex items-center gap-1.5 whitespace-nowrap"
+                >
+                  {biometricBusy ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <ScanFace className="w-3.5 h-3.5" aria-hidden="true" />
+                  )}
+                  <span>{isBiometricEnrolled ? '顔認証を再登録する' : '顔認証を登録する'}</span>
+                </motion.button>
+
+                {isBiometricEnrolled && (
+                  <motion.button
+                    type="button"
+                    data-testid="remove-biometric-settings-btn"
+                    disabled={biometricBusy}
+                    whileHover={{ scale: biometricBusy ? 1 : 1.02 }}
+                    whileTap={{ scale: biometricBusy ? 1 : 0.97 }}
+                    onClick={async () => {
+                      setBiometricError('');
+                      setBiometricBusy(true);
+                      try {
+                        await onRemoveBiometric();
+                      } finally {
+                        setBiometricBusy(false);
+                      }
+                    }}
+                    className="px-3 py-2 text-xs font-medium rounded-xl glass-btn text-slate-700 dark:text-slate-200 whitespace-nowrap"
+                  >
+                    登録を解除
+                  </motion.button>
+                )}
+              </div>
+            )}
+          </div>
         </motion.section>
       </div>
 
@@ -426,7 +528,7 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ type: 'spring', stiffness: 320, damping: 26, delay: 0.14 }}
-        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-4"
+        className="glass-surface rounded-2xl p-6 space-y-4"
       >
         <div className="flex items-center gap-2">
           <KeyRound className="w-4 h-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
@@ -448,7 +550,7 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
               type="password"
               value={currentPass}
               onChange={(e) => setCurrentPass(e.target.value)}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+              className="w-full px-3 py-2 text-sm rounded-xl glass-input text-slate-900 dark:text-slate-100"
               required
             />
           </div>
@@ -465,7 +567,7 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
               type="password"
               value={newPass}
               onChange={(e) => setNewPass(e.target.value)}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+              className="w-full px-3 py-2 text-sm rounded-xl glass-input text-slate-900 dark:text-slate-100"
               required
             />
           </div>
@@ -482,7 +584,7 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
               type="password"
               value={confirmNewPass}
               onChange={(e) => setConfirmNewPass(e.target.value)}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+              className="w-full px-3 py-2 text-sm rounded-xl glass-input text-slate-900 dark:text-slate-100"
               required
             />
           </div>
@@ -499,7 +601,7 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
               disabled={changingPass}
               whileHover={{ scale: changingPass ? 1 : 1.03 }}
               whileTap={{ scale: changingPass ? 1 : 0.96 }}
-              className="px-4 py-2 text-xs font-semibold rounded-lg bg-slate-900 dark:bg-blue-600 text-white hover:opacity-90 disabled:opacity-70 inline-flex items-center gap-2"
+              className="px-4 py-2 text-xs font-semibold rounded-xl glass-primary-btn disabled:opacity-70 inline-flex items-center gap-2"
             >
               {changingPass && <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />}
               {changingPass
@@ -515,13 +617,13 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ type: 'spring', stiffness: 320, damping: 26, delay: 0.18 }}
-        className="bg-white dark:bg-slate-900 border border-red-200 dark:border-red-950 rounded-xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+        className="glass-surface border-red-400/45 bg-red-500/8 rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
       >
         <div>
           <h2 className="text-sm font-bold text-red-700 dark:text-red-400">
             このボルトを完全に削除
           </h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+          <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
             クラウド・サーバー・Cookieから暗号化データを完全に削除します。この操作は取り消せません。
           </p>
         </div>
@@ -537,7 +639,7 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
               whileHover={{ scale: 1.03 }}
               whileTap={{ scale: 0.96 }}
               onClick={() => setConfirmDelete(true)}
-              className="px-4 py-2 text-xs font-semibold rounded-lg border border-red-300 dark:border-red-800 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 inline-flex items-center gap-1.5 self-start whitespace-nowrap"
+              className="px-4 py-2 text-xs font-semibold rounded-xl border border-red-400/55 bg-red-500/10 text-red-700 dark:text-red-300 hover:bg-red-500/20 inline-flex items-center gap-1.5 self-start whitespace-nowrap"
             >
               <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
               ボルトを削除
@@ -555,14 +657,14 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
                 whileHover={{ scale: 1.03 }}
                 whileTap={{ scale: 0.96 }}
                 onClick={() => void onDeleteVault()}
-                className="px-4 py-2 text-xs font-semibold rounded-lg bg-red-600 hover:bg-red-700 text-white"
+                className="px-4 py-2 text-xs font-semibold rounded-xl bg-red-600 hover:bg-red-700 text-white"
               >
                 削除を確定する
               </motion.button>
               <button
                 type="button"
                 onClick={() => setConfirmDelete(false)}
-                className="px-3 py-2 text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700"
+                className="px-3 py-2 text-xs font-medium rounded-xl glass-btn text-slate-700 dark:text-slate-200"
               >
                 中止
               </button>

@@ -63,7 +63,7 @@ export const RecoveryCodesModal: React.FC<RecoveryCodesModalProps> = ({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
-          className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-slate-950/35 backdrop-blur-md flex items-center justify-center p-4"
         >
           <motion.div
             key="recovery-modal-panel"
@@ -71,7 +71,7 @@ export const RecoveryCodesModal: React.FC<RecoveryCodesModalProps> = ({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.92, y: 16 }}
             transition={{ type: 'spring', stiffness: 380, damping: 26 }}
-            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl w-full max-w-md p-6 space-y-5 shadow-2xl"
+            className="glass-modal rounded-3xl w-full max-w-md p-6 space-y-5"
           >
             <div className="flex items-center justify-between gap-4">
               <div>
@@ -110,7 +110,7 @@ export const RecoveryCodesModal: React.FC<RecoveryCodesModalProps> = ({
                       animate={{ opacity: 1, x: 0 }}
                       exit={{ opacity: 0, x: 16 }}
                       transition={{ type: 'spring', stiffness: 380, damping: 26 }}
-                      className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950"
+                      className="glass-subtle flex items-center justify-between gap-2 px-3 py-2 rounded-xl"
                     >
                       <label className="flex items-center gap-2.5 cursor-pointer min-w-0">
                         <input
@@ -161,13 +161,13 @@ export const RecoveryCodesModal: React.FC<RecoveryCodesModalProps> = ({
                 onChange={(e) => setNewCode(e.target.value)}
                 placeholder="新しいリカバリーコードを追加..."
                 aria-label="新しいリカバリーコード"
-                className="flex-1 px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                className="glass-input flex-1 px-3 py-2 text-xs font-mono rounded-xl"
               />
               <motion.button
                 type="submit"
                 whileHover={{ scale: 1.03 }}
                 whileTap={{ scale: 0.95 }}
-                className="px-3 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white inline-flex items-center gap-1 whitespace-nowrap"
+                className="glass-primary-btn px-3.5 py-2 text-xs font-semibold rounded-xl inline-flex items-center gap-1 whitespace-nowrap"
               >
                 <Plus className="w-3.5 h-3.5" aria-hidden="true" />
                 追加

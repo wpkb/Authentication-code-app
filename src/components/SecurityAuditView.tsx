@@ -21,30 +21,30 @@ export const SecurityAuditView: React.FC<SecurityAuditViewProps> = ({
     high: {
       icon: ShieldAlert,
       label: '要対応',
-      textClass: 'text-red-700 dark:text-red-400',
-      borderClass: 'border-red-200 dark:border-red-900',
-      bgClass: 'bg-red-50/70 dark:bg-red-950/30',
+      textClass: 'text-red-700 dark:text-red-300',
+      borderClass: 'border-red-400/50 dark:border-red-400/35',
+      bgClass: 'glass-surface bg-red-500/10 dark:bg-red-500/12',
     },
     medium: {
       icon: AlertTriangle,
       label: '推奨改善',
-      textClass: 'text-amber-700 dark:text-amber-400',
-      borderClass: 'border-amber-200 dark:border-amber-900',
-      bgClass: 'bg-amber-50/70 dark:bg-amber-950/30',
+      textClass: 'text-amber-700 dark:text-amber-300',
+      borderClass: 'border-amber-400/50 dark:border-amber-400/35',
+      bgClass: 'glass-surface bg-amber-500/10 dark:bg-amber-500/12',
     },
     low: {
       icon: Info,
       label: '情報',
-      textClass: 'text-slate-700 dark:text-slate-300',
-      borderClass: 'border-slate-200 dark:border-slate-800',
-      bgClass: 'bg-white dark:bg-slate-900',
+      textClass: 'text-slate-700 dark:text-slate-200',
+      borderClass: '',
+      bgClass: 'glass-surface',
     },
     ok: {
       icon: CheckCircle2,
       label: '良好',
       textClass: 'text-emerald-700 dark:text-emerald-400',
-      borderClass: 'border-slate-200 dark:border-slate-800',
-      bgClass: 'bg-white dark:bg-slate-900',
+      borderClass: '',
+      bgClass: 'glass-surface',
     },
   };
 
@@ -55,7 +55,7 @@ export const SecurityAuditView: React.FC<SecurityAuditViewProps> = ({
         initial={{ opacity: 0, y: 18, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ type: 'spring', stiffness: 340, damping: 25 }}
-        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 grid grid-cols-1 md:grid-cols-3 gap-6"
+        className="glass-surface rounded-2xl p-6 grid grid-cols-1 md:grid-cols-3 gap-6"
       >
         <div>
           <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
@@ -138,7 +138,7 @@ export const SecurityAuditView: React.FC<SecurityAuditViewProps> = ({
                 damping: 26,
                 delay: Math.min(idx * 0.06, 0.3),
               }}
-              className={`border rounded-xl p-5 ${meta.borderClass} ${meta.bgClass}`}
+              className={`rounded-2xl p-5 ${meta.bgClass} ${meta.borderClass}`}
             >
               <div className="flex items-start gap-3">
                 <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${meta.textClass}`} aria-hidden="true" />

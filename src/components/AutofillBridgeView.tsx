@@ -202,7 +202,7 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ type: 'spring', stiffness: 320, damping: 26 }}
-        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-5"
+        className="glass-surface rounded-2xl p-6 space-y-5"
       >
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
@@ -216,7 +216,7 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-3 border-t border-slate-900/8 dark:border-white/10 text-xs">
           <div className="flex items-start gap-2.5">
             <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" aria-hidden="true" />
             <div>
@@ -301,7 +301,7 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ type: 'spring', stiffness: 320, damping: 26, delay: 0.06 }}
-        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-4"
+        className="glass-surface rounded-2xl p-6 space-y-4"
       >
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="space-y-1">
@@ -326,7 +326,7 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
                   'info'
                 );
               }}
-              className="px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white inline-flex items-center gap-1.5 whitespace-nowrap cursor-grab active:cursor-grabbing"
+              className="px-4 py-2 text-xs font-semibold rounded-xl glass-primary-btn inline-flex items-center gap-1.5 whitespace-nowrap cursor-grab active:cursor-grabbing"
               title="ブックマークバーへドラッグ＆ドロップ"
             >
               <Zap className="w-3.5 h-3.5" aria-hidden="true" />
@@ -338,7 +338,7 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
               whileHover={{ scale: 1.03 }}
               whileTap={{ scale: 0.96 }}
               onClick={() => void handleCopyBookmarklet()}
-              className="px-3.5 py-2 text-xs font-semibold rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 whitespace-nowrap"
+              className="px-3.5 py-2 text-xs font-semibold rounded-xl glass-btn text-slate-700 dark:text-slate-200 inline-flex items-center gap-1.5 whitespace-nowrap"
             >
               {copiedBookmarklet ? (
                 <Check className="w-3.5 h-3.5 text-emerald-600" aria-hidden="true" />
@@ -370,12 +370,12 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
           ].map((item) => (
             <div
               key={item.step}
-              className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/50 space-y-1"
+              className="p-3.5 rounded-2xl glass-subtle space-y-1"
             >
               <p className="text-xs font-bold text-slate-900 dark:text-white tabular-nums">
                 Step {item.step} · {item.title}
               </p>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+              <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
                 {item.desc}
               </p>
             </div>
@@ -390,7 +390,7 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ type: 'spring', stiffness: 320, damping: 26, delay: 0.1 }}
-          className="lg:col-span-7 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-4"
+          className="lg:col-span-7 glass-surface rounded-2xl p-6 space-y-4"
         >
           <div>
             <h2 className="text-base font-bold text-slate-900 dark:text-white">
@@ -402,7 +402,7 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
           </div>
 
           {accounts.length === 0 ? (
-            <div className="p-6 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-center text-xs text-slate-500 dark:text-slate-400">
+            <div className="p-6 rounded-2xl glass-subtle border-dashed text-center text-xs text-slate-500 dark:text-slate-400">
               まずは認証アカウントを1つ以上追加してください。
             </div>
           ) : (
@@ -417,10 +417,10 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
                   <motion.div
                     key={acc.id}
                     whileHover={{ x: 2 }}
-                    className={`p-3.5 rounded-xl border transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                    className={`p-3.5 rounded-2xl transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
                       isSelected
-                        ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/30 dark:border-blue-700'
-                        : 'border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-950/40'
+                        ? 'glass-subtle border-blue-500/70 bg-blue-500/12 dark:bg-blue-500/16'
+                        : 'glass-subtle'
                     }`}
                   >
                     <div className="min-w-0">
@@ -448,7 +448,7 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
                         whileHover={{ scale: 1.03 }}
                         whileTap={{ scale: 0.95 }}
                         onClick={() => void handleTriggerOneTapAutofill(acc)}
-                        className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white inline-flex items-center gap-1.5 whitespace-nowrap"
+                        className="px-3 py-1.5 text-xs font-semibold rounded-xl glass-primary-btn inline-flex items-center gap-1.5 whitespace-nowrap"
                       >
                         <Wand2 className="w-3.5 h-3.5" aria-hidden="true" />
                         1タップ自動入力
@@ -462,7 +462,7 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
                           target="_blank"
                           rel="noopener noreferrer"
                           onClick={() => void handleTriggerOneTapAutofill(acc)}
-                          className="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-800 inline-flex items-center gap-1 whitespace-nowrap"
+                          className="px-3 py-1.5 text-xs font-medium rounded-xl glass-btn text-slate-700 dark:text-slate-200 inline-flex items-center gap-1 whitespace-nowrap"
                         >
                           <span>開く</span>
                           <ExternalLink className="w-3 h-3" aria-hidden="true" />
@@ -476,7 +476,7 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
                           whileTap={{ scale: 0.95 }}
                           onClick={() => void handleCredentialApiSync(acc)}
                           title="Credential Management API に登録"
-                          className="px-2.5 py-1.5 text-[11px] font-medium rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-800 whitespace-nowrap"
+                          className="px-2.5 py-1.5 text-[11px] font-medium rounded-xl glass-btn text-slate-600 dark:text-slate-300 whitespace-nowrap"
                         >
                           Autofill保存
                         </motion.button>
@@ -494,19 +494,19 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ type: 'spring', stiffness: 320, damping: 26, delay: 0.14 }}
-          className="lg:col-span-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-4"
+          className="lg:col-span-5 glass-surface rounded-2xl p-6 space-y-4"
         >
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-base font-bold text-slate-900 dark:text-white">
               自動入力テストフォーム
             </h2>
-            <div className="flex items-center gap-1 p-0.5 bg-slate-100 dark:bg-slate-800 rounded-lg text-[11px] font-semibold">
+            <div className="flex items-center gap-1 p-1 glass-subtle rounded-xl text-[11px] font-semibold">
               <button
                 type="button"
                 onClick={() => setFormInputMode('single')}
-                className={`px-2.5 py-1 rounded-md transition-colors ${
+                className={`px-2.5 py-1 rounded-lg transition-colors ${
                   formInputMode === 'single'
-                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                    ? 'bg-white/90 dark:bg-white/15 text-slate-900 dark:text-white shadow-sm'
                     : 'text-slate-500 dark:text-slate-400'
                 }`}
               >
@@ -515,9 +515,9 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
               <button
                 type="button"
                 onClick={() => setFormInputMode('split')}
-                className={`px-2.5 py-1 rounded-md transition-colors ${
+                className={`px-2.5 py-1 rounded-lg transition-colors ${
                   formInputMode === 'split'
-                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs'
+                    ? 'bg-white/90 dark:bg-white/15 text-slate-900 dark:text-white shadow-sm'
                     : 'text-slate-500 dark:text-slate-400'
                 }`}
               >
@@ -554,7 +554,7 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
                     setVerifyStatus('idle');
                   }}
                   placeholder="左の「1タップ自動入力」をクリック"
-                  className="w-full px-3.5 py-2.5 text-lg font-mono tracking-widest rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-blue-600 tabular-nums"
+                  className="w-full px-3.5 py-2.5 text-lg font-mono tracking-widest rounded-xl glass-input text-slate-900 dark:text-slate-100 tabular-nums"
                 />
               </div>
             ) : (
@@ -587,7 +587,7 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
                           splitInputRefs.current[idx + 1]?.focus();
                         }
                       }}
-                      className="w-full h-11 text-center text-lg font-mono font-bold rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 focus:outline-none focus:ring-2 focus:ring-blue-600 tabular-nums"
+                      className="w-full h-11 text-center text-lg font-mono font-bold rounded-xl glass-input text-slate-900 dark:text-slate-100 tabular-nums"
                     />
                   ))}
                 </div>
@@ -613,7 +613,7 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
                   initial={{ opacity: 0, scale: 0.96 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0 }}
-                  className="p-3 rounded-lg border border-emerald-200 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950/40 text-xs text-emerald-800 dark:text-emerald-200 flex items-center gap-2"
+                  className="p-3 rounded-xl border border-emerald-400/40 bg-emerald-500/12 backdrop-blur-sm text-xs text-emerald-800 dark:text-emerald-200 flex items-center gap-2"
                 >
                   <CheckCircle2 className="w-4 h-4 shrink-0" aria-hidden="true" />
                   <span>自動入力されたOTPコードは現在のTOTPと一致しました。</span>
@@ -624,7 +624,7 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
                   initial={{ opacity: 0, scale: 0.96 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0 }}
-                  className="p-3 rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/40 text-xs text-red-700 dark:text-red-300"
+                  className="p-3 rounded-xl border border-red-400/40 bg-red-500/12 backdrop-blur-sm text-xs text-red-700 dark:text-red-300"
                 >
                   入力コードが選択アカウントの現在のTOTPと一致しませんでした。
                 </motion.div>
@@ -636,7 +636,7 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
                 type="submit"
                 whileHover={{ scale: 1.03 }}
                 whileTap={{ scale: 0.96 }}
-                className="px-4 py-2 text-xs font-semibold rounded-lg bg-slate-900 dark:bg-blue-600 text-white hover:opacity-90 whitespace-nowrap"
+                className="px-4 py-2 text-xs font-semibold rounded-xl glass-primary-btn whitespace-nowrap"
               >
                 入力コードを検証
               </motion.button>
@@ -646,7 +646,7 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
                 whileHover={{ scale: 1.03 }}
                 whileTap={{ scale: 0.96 }}
                 onClick={() => void handleToggleWebOtp()}
-                className="px-3 py-2 text-xs font-medium rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 whitespace-nowrap"
+                className="px-3 py-2 text-xs font-medium rounded-xl glass-btn text-slate-700 dark:text-slate-200 whitespace-nowrap"
               >
                 {webOtpListening ? 'WebOTP 待機を停止' : 'WebOTP API で待機'}
               </motion.button>

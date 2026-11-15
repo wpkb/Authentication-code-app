@@ -66,7 +66,7 @@ export const QrExportModal: React.FC<QrExportModalProps> = ({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
-          className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-slate-950/35 backdrop-blur-md flex items-center justify-center p-4"
         >
           <motion.div
             key="qr-modal-panel"
@@ -74,7 +74,7 @@ export const QrExportModal: React.FC<QrExportModalProps> = ({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.92, y: 16 }}
             transition={{ type: 'spring', stiffness: 380, damping: 26 }}
-            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl w-full max-w-md p-6 space-y-5 shadow-2xl"
+            className="glass-modal rounded-3xl w-full max-w-md p-6 space-y-5"
           >
             <div className="flex items-center justify-between gap-4">
               <div>
@@ -98,7 +98,7 @@ export const QrExportModal: React.FC<QrExportModalProps> = ({
               </motion.button>
             </div>
 
-            <div className="flex flex-col items-center justify-center p-5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl">
+            <div className="glass-subtle flex flex-col items-center justify-center p-5 rounded-2xl">
               {qrDataUrl ? (
                 <motion.img
                   initial={{ opacity: 0, scale: 0.85 }}
@@ -150,7 +150,7 @@ export const QrExportModal: React.FC<QrExportModalProps> = ({
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -4 }}
                   transition={{ duration: 0.15 }}
-                  className="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 font-mono text-xs break-all select-all"
+                  className="glass-subtle px-3 py-2 rounded-xl font-mono text-xs break-all select-all"
                 >
                   {showSecret ? account.secret : '••••••••••••••••••••••••'}
                 </motion.div>
@@ -163,7 +163,7 @@ export const QrExportModal: React.FC<QrExportModalProps> = ({
                 whileHover={{ scale: 1.03 }}
                 whileTap={{ scale: 0.95 }}
                 onClick={() => void handleCopyUri()}
-                className="px-3 py-2 text-xs font-semibold rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1.5"
+                className="glass-btn px-3.5 py-2 text-xs font-semibold rounded-xl text-slate-700 dark:text-slate-100 inline-flex items-center gap-1.5"
               >
                 {copiedUri ? (
                   <>
@@ -182,7 +182,7 @@ export const QrExportModal: React.FC<QrExportModalProps> = ({
                 whileHover={{ scale: 1.03 }}
                 whileTap={{ scale: 0.95 }}
                 onClick={onClose}
-                className="px-4 py-2 text-xs font-semibold rounded-lg bg-slate-900 dark:bg-blue-600 text-white"
+                className="glass-primary-btn px-4 py-2 text-xs font-semibold rounded-xl"
               >
                 閉じる
               </motion.button>

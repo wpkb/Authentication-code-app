@@ -89,7 +89,7 @@ export const StartupLoadingModal: React.FC<StartupLoadingModalProps> = ({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.22 }}
-          className="fixed inset-0 z-[65] bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4"
+          className="fixed inset-0 z-[65] bg-slate-950/35 backdrop-blur-md flex items-center justify-center p-4"
         >
           <motion.div
             key="startup-loading-card"
@@ -97,13 +97,13 @@ export const StartupLoadingModal: React.FC<StartupLoadingModalProps> = ({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.92, y: -16 }}
             transition={{ type: 'spring', stiffness: 360, damping: 26 }}
-            className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-2xl space-y-5"
+            className="w-full max-w-md glass-modal rounded-3xl p-6 space-y-5"
           >
             <div className="flex items-center gap-3.5">
               <motion.div
                 animate={{ rotate: 360 }}
                 transition={{ repeat: Infinity, duration: 1.4, ease: 'linear' }}
-                className="w-11 h-11 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 flex items-center justify-center shrink-0"
+                className="w-11 h-11 rounded-2xl glass-subtle border border-blue-400/40 flex items-center justify-center shrink-0"
               >
                 <Loader2 className="w-5 h-5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
               </motion.div>
@@ -137,12 +137,12 @@ export const StartupLoadingModal: React.FC<StartupLoadingModalProps> = ({
                         opacity: isDone || isActive ? 1 : 0.55,
                       }}
                       transition={{ type: 'spring', stiffness: 380, damping: 28 }}
-                      className={`flex items-start gap-3 p-3 rounded-xl border transition-colors ${
+                      className={`flex items-start gap-3 p-3 rounded-2xl border transition-colors ${
                         isActive
-                          ? 'border-blue-500/70 bg-blue-50/70 dark:bg-blue-950/40 dark:border-blue-700'
+                          ? 'border-blue-500/60 bg-blue-500/10 dark:bg-blue-500/15 dark:border-blue-400/45'
                           : isDone
-                          ? 'border-emerald-200 dark:border-emerald-900/70 bg-emerald-50/50 dark:bg-emerald-950/20'
-                          : 'border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40'
+                          ? 'border-emerald-500/40 bg-emerald-500/10 dark:bg-emerald-500/15'
+                          : 'glass-subtle'
                       }`}
                     >
                       <div className="mt-0.5 shrink-0">
@@ -221,7 +221,7 @@ export const StartupLoadingModal: React.FC<StartupLoadingModalProps> = ({
                     whileHover={{ scale: 1.03 }}
                     whileTap={{ scale: 0.96 }}
                     onClick={onSkipWait}
-                    className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                    className="glass-btn px-3.5 py-1.5 text-xs font-semibold rounded-xl text-slate-700 dark:text-slate-100 inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
                   >
                     <SkipForward className="w-3.5 h-3.5" aria-hidden="true" />
                     スキップして手動操作へ
