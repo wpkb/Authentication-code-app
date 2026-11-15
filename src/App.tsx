@@ -30,6 +30,9 @@ import {
 import { AddEditAccountModal } from './components/AddEditAccountModal';
 import { AutofillBridgeView } from './components/AutofillBridgeView';
 import { BottomToastHost, type ToastItem, type ToastTone } from './components/BottomToastHost';
+import { FaceAuthModal } from './components/FaceAuthModal';
+import { OfflineIndicator } from './components/OfflineIndicator';
+import { PWAInstallButton } from './components/PWAInstallButton';
 import { QrExportModal } from './components/QrExportModal';
 import { RecoveryCodesModal } from './components/RecoveryCodesModal';
 import { SecurityAuditView } from './components/SecurityAuditView';
@@ -38,16 +41,15 @@ import { SyncBackupView } from './components/SyncBackupView';
 import { TotpCard } from './components/TotpCard';
 import { VaultAuthScreen } from './components/VaultAuthScreen';
 import {
-  clearAllBiometricKeys,
-  detectBiometricCapabilities,
-  enrollBiometricForVault,
-  getEnrolledBiometricVaultIds,
-  removeBiometricForVault,
-  syncEnrolledBiometricVaultIds,
-  updateBiometricVaultKey,
-  verifyAndLoadBiometricVaultKey,
-  type BiometricCapabilities,
-} from './crypto/biometricVault';
+  clearAllFaceVaultKeys,
+  detectCameraCapabilities,
+  getEnrolledFaceVaultIds,
+  removeFaceForVault,
+  saveEnrolledFaceForVault,
+  syncEnrolledFaceVaultIds,
+  updateFaceVaultKey,
+  type CameraCapabilities,
+} from './crypto/faceAuthVault';
 import {
   clearAllTrustedKeys,
   clearAllTrustedKeysForUser,
@@ -200,19 +202,25 @@ export default function App() {
   const [recoveryAccountId, setRecoveryAccountId] = useState<string | null>(null);
   const [deletingAccount, setDeletingAccount] = useState<TotpAccount | null>(null);
 
-  // WebAuthn Biometric / Face Authentication state
-  const [biometricVaultIds, setBiometricVaultIds] = useState<string[]>(() =>
-    getEnrolledBiometricVaultIds()
+  // Independent In-Web Camera Face Authentication state
+  const [faceVaultIds, setFaceVaultIds] = useState<string[]>(() =>
+    getEnrolledFaceVaultIds()
   );
-  const [biometricCapabilities, setBiometricCapabilities] =
-    useState<BiometricCapabilities>({
-      supported: true,
-      platformAvailable: false,
-      inIframe: false,
-      rpId: '',
-    });
-  const [biometricEnrolling, setBiometricEnrolling] = useState<boolean>(false);
-  const [biometricBannerDismissed, setBiometricBannerDismissed] =
+  const [cameraCapabilities, setCameraCapabilities] =
+    useState<CameraCapabilities>(() => detectCameraCapabilities());
+  const [faceModal, setFaceModal] = useState<{
+    open: boolean;
+    mode: 'enroll' | 'verify';
+    vaultId: string;
+    vaultName?: string;
+    storageMode: StorageMode;
+  }>({
+    open: false,
+    mode: 'enroll',
+    vaultId: '',
+    storageMode: 'auto',
+  });
+  const [faceBannerDismissed, setFaceBannerDismissed] =
     useState<boolean>(false);
 
   // Startup loading overlay state
@@ -310,16 +318,13 @@ export default function App() {
     pushToast('待機をスキップしました。手動で操作できます。', 'info');
   }, [pushToast]);
 
-  // Detect WebAuthn platform biometric availability & sync enrolled vault IDs
+  // Detect camera capability & sync enrolled in-web face auth vault IDs
   useEffect(() => {
     let active = true;
-    void Promise.all([
-      detectBiometricCapabilities(),
-      syncEnrolledBiometricVaultIds(),
-    ]).then(([caps, ids]) => {
+    setCameraCapabilities(detectCameraCapabilities());
+    void syncEnrolledFaceVaultIds().then((ids) => {
       if (!active) return;
-      setBiometricCapabilities(caps);
-      setBiometricVaultIds(ids);
+      setFaceVaultIds(ids);
     });
     return () => {
       active = false;
@@ -469,8 +474,8 @@ export default function App() {
       await clearAllTrustedKeysForUser(uid);
       clearProfileSessionCache(uid);
     }
-    await clearAllBiometricKeys();
-    setBiometricVaultIds([]);
+    await clearAllFaceVaultKeys();
+    setFaceVaultIds([]);
     clearVaultLocked();
     await signOut(auth);
     activeKeyRef.current = null;
@@ -662,50 +667,77 @@ export default function App() {
     pushToast(`ボルト「${decrypted.vaultName}」をロック解除しました`, 'success');
   };
 
-  const handleEnrollBiometric = useCallback(async () => {
+  const handleCloseFaceModal = useCallback(() => {
+    setFaceModal((prev) => ({ ...prev, open: false }));
+  }, []);
+
+  const handleOpenFaceEnroll = useCallback(() => {
     const currentVault = vaultRef.current;
-    const currentSession = activeKeyRef.current;
-    if (!currentVault || !currentSession) {
-      throw new Error('ボルトのロック解除後に顔認証を登録してください。');
-    }
-    setBiometricEnrolling(true);
-    try {
-      const updatedIds = await enrollBiometricForVault({
+    if (!currentVault) return;
+    setFaceModal({
+      open: true,
+      mode: 'enroll',
+      vaultId: currentVault.vaultId,
+      vaultName: currentVault.vaultName,
+      storageMode,
+    });
+  }, [storageMode]);
+
+  const handleFaceEnrollComplete = useCallback(
+    async (samples: number[][]) => {
+      const currentVault = vaultRef.current;
+      const currentSession = activeKeyRef.current;
+      if (!currentVault || !currentSession) {
+        throw new Error('ボルトのロック解除後にWeb顔認証を登録してください。');
+      }
+      const updatedIds = await saveEnrolledFaceForVault({
         vaultId: currentVault.vaultId,
-        vaultName: currentVault.vaultName,
-        userEmail: googleUser?.email,
+        samples,
         key: currentSession.key,
         saltB64: currentSession.saltB64,
         iterations: currentSession.iterations,
       });
-      setBiometricVaultIds(updatedIds);
-      setBiometricBannerDismissed(false);
+      setFaceVaultIds(updatedIds);
+      setFaceBannerDismissed(false);
       pushToast(
-        '顔認証ロック解除を登録しました。次回ロック時から顔認証でロック解除できます',
+        'Webカメラ顔認証を登録しました。次回ロック時からカメラ顔認証で解除できます',
         'success'
       );
-    } catch (err) {
-      const msg =
-        err instanceof Error ? err.message : '顔認証の登録に失敗しました。';
-      pushToast(msg, 'error');
-      throw err;
-    } finally {
-      setBiometricEnrolling(false);
-    }
-  }, [googleUser, pushToast]);
+    },
+    [pushToast]
+  );
 
-  const handleRemoveBiometric = useCallback(async () => {
+  const handleRemoveFaceAuth = useCallback(async () => {
     const currentVault = vaultRef.current;
     if (!currentVault) return;
-    const updatedIds = await removeBiometricForVault(currentVault.vaultId);
-    setBiometricVaultIds(updatedIds);
-    pushToast('この端末の顔認証ロック解除を解除しました', 'info');
+    const updatedIds = await removeFaceForVault(currentVault.vaultId);
+    setFaceVaultIds(updatedIds);
+    pushToast('このブラウザのWeb顔認証データを削除しました', 'info');
   }, [pushToast]);
 
-  const handleBiometricUnlock = useCallback(
-    async (targetVaultId: string, mode: StorageMode) => {
+  const handleOpenFaceUnlock = useCallback(
+    (targetVaultId: string, mode: StorageMode) => {
+      setFaceModal({
+        open: true,
+        mode: 'verify',
+        vaultId: targetVaultId,
+        vaultName: targetVaultId,
+        storageMode: mode,
+      });
+    },
+    []
+  );
+
+  const handleFaceVerifySuccess = useCallback(
+    async (verifiedSession: {
+      key: CryptoKey;
+      saltB64: string;
+      iterations: number;
+      confidencePct: number;
+    }) => {
+      const targetVaultId = faceModal.vaultId;
+      const mode = faceModal.storageMode;
       handleSelectStorageMode(mode);
-      const bioKey = await verifyAndLoadBiometricVaultKey(targetVaultId);
       const loaded = await loadEncryptedVault(targetVaultId, mode, googleUser);
       if (!loaded.envelope) {
         throw new Error(`ボルト "${targetVaultId}" が見つかりませんでした。`);
@@ -713,19 +745,19 @@ export default function App() {
 
       let decrypted: VaultPayload;
       try {
-        decrypted = await decryptVaultWithKey(loaded.envelope, bioKey.key);
+        decrypted = await decryptVaultWithKey(loaded.envelope, verifiedSession.key);
       } catch {
-        const nextIds = await removeBiometricForVault(targetVaultId);
-        setBiometricVaultIds(nextIds);
+        const nextIds = await removeFaceForVault(targetVaultId);
+        setFaceVaultIds(nextIds);
         throw new Error(
-          'パスフレーズが変更されたため顔認証鍵をリセットしました。マスターパスフレーズで解除後、再登録してください。'
+          'パスフレーズが変更されたためWeb顔認証鍵をリセットしました。マスターパスフレーズで解除後、再登録してください。'
         );
       }
 
       activeKeyRef.current = {
-        key: bioKey.key,
-        saltB64: bioKey.saltB64,
-        iterations: bioKey.iterations,
+        key: verifiedSession.key,
+        saltB64: verifiedSession.saltB64,
+        iterations: verifiedSession.iterations,
       };
       clearVaultLocked();
       lastActivityRef.current = Date.now();
@@ -750,9 +782,13 @@ export default function App() {
       });
       setActiveSection('all');
       setSelectedFolder(null);
-      pushToast(`顔認証で「${decrypted.vaultName}」をロック解除しました`, 'success');
+      setFaceModal((prev) => ({ ...prev, open: false }));
+      pushToast(
+        `Web顔認証 (一致度 ${verifiedSession.confidencePct}%) で「${decrypted.vaultName}」をロック解除しました`,
+        'success'
+      );
     },
-    [googleUser, handleSelectStorageMode, clearVaultLocked, pushToast]
+    [faceModal.vaultId, faceModal.storageMode, googleUser, handleSelectStorageMode, clearVaultLocked, pushToast]
   );
 
   const handleImportEnvelope = async (
@@ -852,14 +888,14 @@ export default function App() {
         pushToast(msg, 'warning');
       } else if (reason === 'session') {
         void clearAllTrustedKeys();
-        void clearAllBiometricKeys();
-        setBiometricVaultIds([]);
+        void clearAllFaceVaultKeys();
+        setFaceVaultIds([]);
         setLockNotice(
           '「離脱時自動ロック（Session Onlyモード）」が有効なため、ページ離脱・ブラウザ終了時にボルトを即時ロックしました。'
         );
       } else {
         setLockNotice(
-          'ボルトを手動ロックしました。再アクセスするには顔認証（登録済みの場合）またはマスターパスフレーズを入力してください。'
+          'ボルトを手動ロックしました。再アクセスするにはWeb顔認証（登録済みの場合）またはマスターパスフレーズを入力してください。'
         );
         pushToast('ボルトを安全にロックしました', 'info');
       }
@@ -876,8 +912,8 @@ export default function App() {
 
       if (wasSessionOnly && (!hadTabSession || pendingClosedLock)) {
         void clearAllTrustedKeys();
-        void clearAllBiometricKeys();
-        setBiometricVaultIds([]);
+        void clearAllFaceVaultKeys();
+        setFaceVaultIds([]);
         if (pendingClosedLock) {
           localStorage.removeItem(SESSION_CLOSED_LOCK_KEY);
           setLockNotice(
@@ -905,7 +941,7 @@ export default function App() {
         // ignore
       }
       void clearAllTrustedKeys();
-      void clearAllBiometricKeys();
+      void clearAllFaceVaultKeys();
       if (vaultRef.current || activeKeyRef.current) {
         lockVault('session');
       }
@@ -1261,8 +1297,8 @@ export default function App() {
       });
     }
 
-    if (biometricVaultIds.includes(vault.vaultId)) {
-      await updateBiometricVaultKey({
+    if (faceVaultIds.includes(vault.vaultId)) {
+      await updateFaceVaultKey({
         vaultId: vault.vaultId,
         ...newSession,
       });
@@ -1279,8 +1315,8 @@ export default function App() {
     if (googleUser) {
       await clearTrustedVaultKey(googleUser.uid, targetId);
     }
-    const updatedBioIds = await removeBiometricForVault(targetId);
-    setBiometricVaultIds(updatedBioIds);
+    const updatedFaceIds = await removeFaceForVault(targetId);
+    setFaceVaultIds(updatedFaceIds);
     await deleteVaultEverywhere(targetId, googleUser);
     if (initialVaultId === targetId) {
       setActiveVaultIdPref(null);
@@ -1390,9 +1426,9 @@ export default function App() {
               onUnlockVault={handleUnlockVault}
               onImportEnvelope={handleImportEnvelope}
               onStartDemo={handleStartDemo}
-              biometricVaultIds={biometricVaultIds}
-              biometricCapabilities={biometricCapabilities}
-              onBiometricUnlock={handleBiometricUnlock}
+              faceVaultIds={faceVaultIds}
+              cameraCapabilities={cameraCapabilities}
+              onOpenFaceUnlock={handleOpenFaceUnlock}
               lockNotice={lockNotice}
               onDismissLockNotice={() => setLockNotice(null)}
               isDark={isDark}
@@ -1689,23 +1725,22 @@ export default function App() {
                 </div>
 
                 <div className="space-y-1.5">
-                  {biometricCapabilities.supported && (
+                  {cameraCapabilities.supported && (
                     <motion.button
                       type="button"
                       data-testid="sidebar-biometric-btn"
-                      disabled={biometricEnrolling}
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.96 }}
                       onClick={() => {
-                        if (biometricVaultIds.includes(vault.vaultId)) {
+                        if (faceVaultIds.includes(vault.vaultId)) {
                           setActiveSection('sync');
                           setSelectedFolder(null);
                         } else {
-                          void handleEnrollBiometric().catch(() => {});
+                          handleOpenFaceEnroll();
                         }
                       }}
                       className={`w-full py-1.5 px-2.5 rounded-xl text-xs font-semibold inline-flex items-center justify-between gap-2 transition-colors ${
-                        biometricVaultIds.includes(vault.vaultId)
+                        faceVaultIds.includes(vault.vaultId)
                           ? 'glass-subtle border-emerald-500/45 text-emerald-700 dark:text-emerald-300'
                           : 'glass-btn text-blue-700 dark:text-blue-300'
                       }`}
@@ -1713,15 +1748,13 @@ export default function App() {
                       <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
                         <ScanFace className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                         <span>
-                          {biometricEnrolling
-                            ? '顔認証を登録中...'
-                            : biometricVaultIds.includes(vault.vaultId)
-                            ? '顔認証ロック解除: 有効'
-                            : '顔認証ロック解除を登録'}
+                          {faceVaultIds.includes(vault.vaultId)
+                            ? 'Web顔認証: 有効'
+                            : 'Web顔認証を登録'}
                         </span>
                       </span>
                       <span className="text-[10px] opacity-75 whitespace-nowrap">
-                        {biometricVaultIds.includes(vault.vaultId) ? '設定' : '登録'}
+                        {faceVaultIds.includes(vault.vaultId) ? '設定' : '登録'}
                       </span>
                     </motion.button>
                   )}
@@ -1883,21 +1916,20 @@ export default function App() {
                     </div>
 
                     <div className="space-y-2">
-                      {biometricCapabilities.supported && (
+                      {cameraCapabilities.supported && (
                         <button
                           type="button"
-                          disabled={biometricEnrolling}
                           onClick={() => {
-                            if (biometricVaultIds.includes(vault.vaultId)) {
+                            setMobileMenuOpen(false);
+                            if (faceVaultIds.includes(vault.vaultId)) {
                               setActiveSection('sync');
                               setSelectedFolder(null);
-                              setMobileMenuOpen(false);
                             } else {
-                              void handleEnrollBiometric().catch(() => {});
+                              handleOpenFaceEnroll();
                             }
                           }}
                           className={`w-full py-2 px-3 rounded-xl text-xs font-semibold inline-flex items-center justify-between gap-2 ${
-                            biometricVaultIds.includes(vault.vaultId)
+                            faceVaultIds.includes(vault.vaultId)
                               ? 'glass-subtle border-emerald-500/45 text-emerald-700 dark:text-emerald-300'
                               : 'glass-btn text-blue-700 dark:text-blue-300'
                           }`}
@@ -1905,15 +1937,13 @@ export default function App() {
                           <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
                             <ScanFace className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                             <span>
-                              {biometricEnrolling
-                                ? '顔認証を登録中...'
-                                : biometricVaultIds.includes(vault.vaultId)
-                                ? '顔認証ロック解除: 有効'
-                                : '顔認証ロック解除を登録'}
+                              {faceVaultIds.includes(vault.vaultId)
+                                ? 'Web顔認証: 有効'
+                                : 'Web顔認証を登録'}
                             </span>
                           </span>
                           <span className="text-[10px] opacity-75">
-                            {biometricVaultIds.includes(vault.vaultId) ? '設定' : '登録'}
+                            {faceVaultIds.includes(vault.vaultId) ? '設定' : '登録'}
                           </span>
                         </button>
                       )}
@@ -2026,7 +2056,13 @@ export default function App() {
                   )}
                 </div>
 
-                <div className="shrink-0">
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="hidden sm:block">
+                    <PWAInstallButton
+                      compact
+                      onInstalled={() => pushToast('KagiVault をPWAアプリとしてインストールしました', 'success')}
+                    />
+                  </div>
                   <motion.button
                     type="button"
                     whileHover={{ scale: 1.03 }}
@@ -2062,12 +2098,11 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Dismissible Biometric Enrollment Banner when platform auth is ready and not enrolled */}
+                {/* Dismissible In-Web Face Auth Enrollment Banner */}
                 <AnimatePresence>
-                  {biometricCapabilities.supported &&
-                    biometricCapabilities.platformAvailable &&
-                    !biometricVaultIds.includes(vault.vaultId) &&
-                    !biometricBannerDismissed &&
+                  {cameraCapabilities.supported &&
+                    !faceVaultIds.includes(vault.vaultId) &&
+                    !faceBannerDismissed &&
                     activeSection !== 'sync' && (
                       <motion.div
                         key="biometric-enroll-banner"
@@ -2082,10 +2117,10 @@ export default function App() {
                           </div>
                           <div className="min-w-0">
                             <p className="text-xs font-bold text-slate-900 dark:text-white">
-                              ロック解除を顔認証・生体認証に対応させる
+                              Webカメラ顔認証でスムーズにロック解除
                             </p>
                             <p className="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5">
-                              一度ロックされた後も、Face ID / Windows Hello でスムーズにロック解除できます。
+                              端末OSに依存せずブラウザ内のAI顔認識だけで、ロック後の再解除を行えます。
                             </p>
                           </div>
                         </div>
@@ -2093,18 +2128,17 @@ export default function App() {
                           <motion.button
                             type="button"
                             data-testid="enroll-biometric-banner-btn"
-                            disabled={biometricEnrolling}
-                            whileHover={{ scale: biometricEnrolling ? 1 : 1.03 }}
-                            whileTap={{ scale: biometricEnrolling ? 1 : 0.96 }}
-                            onClick={() => void handleEnrollBiometric().catch(() => {})}
-                            className="px-3.5 py-2 text-xs font-semibold rounded-xl glass-primary-btn disabled:opacity-70 inline-flex items-center gap-1.5 whitespace-nowrap"
+                            whileHover={{ scale: 1.03 }}
+                            whileTap={{ scale: 0.96 }}
+                            onClick={handleOpenFaceEnroll}
+                            className="px-3.5 py-2 text-xs font-semibold rounded-xl glass-primary-btn inline-flex items-center gap-1.5 whitespace-nowrap"
                           >
                             <ScanFace className="w-3.5 h-3.5" aria-hidden="true" />
-                            <span>{biometricEnrolling ? '登録中...' : '顔認証を登録'}</span>
+                            <span>顔認証を登録</span>
                           </motion.button>
                           <button
                             type="button"
-                            onClick={() => setBiometricBannerDismissed(true)}
+                            onClick={() => setFaceBannerDismissed(true)}
                             className="px-2.5 py-2 text-xs font-medium rounded-xl glass-btn text-slate-600 dark:text-slate-300 whitespace-nowrap"
                           >
                             あとで
@@ -2244,10 +2278,10 @@ export default function App() {
                         onChangeAutoLock={handleChangeAutoLock}
                         onChangePassphrase={handleChangePassphrase}
                         onDeleteVault={handleDeleteVault}
-                        isBiometricEnrolled={biometricVaultIds.includes(vault.vaultId)}
-                        biometricCapabilities={biometricCapabilities}
-                        onEnrollBiometric={handleEnrollBiometric}
-                        onRemoveBiometric={handleRemoveBiometric}
+                        isFaceEnrolled={faceVaultIds.includes(vault.vaultId)}
+                        cameraCapabilities={cameraCapabilities}
+                        onOpenFaceEnroll={handleOpenFaceEnroll}
+                        onRemoveFaceAuth={handleRemoveFaceAuth}
                         onToast={pushToast}
                       />
                     </motion.div>
@@ -2343,12 +2377,22 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Global Centered Startup Wait Popup & Bottom Toast Notifications */}
+      {/* Global Centered Startup Wait Popup, Web Camera Face Auth Modal, Offline Status & Bottom Toast Notifications */}
+      <FaceAuthModal
+        open={faceModal.open}
+        mode={faceModal.mode}
+        vaultId={faceModal.vaultId}
+        vaultName={faceModal.vaultName}
+        onClose={handleCloseFaceModal}
+        onEnrollComplete={handleFaceEnrollComplete}
+        onVerifySuccess={handleFaceVerifySuccess}
+      />
       <StartupLoadingModal
         phase={startupPhase}
         statusDetail={startupDetail}
         onSkipWait={handleSkipStartupWait}
       />
+      <OfflineIndicator />
       <BottomToastHost toasts={toasts} onDismiss={dismissToast} />
     </MotionConfig>
   );

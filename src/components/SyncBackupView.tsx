@@ -13,7 +13,7 @@ import {
   ShieldCheck,
   Trash2,
 } from 'lucide-react';
-import type { BiometricCapabilities } from '../crypto/biometricVault';
+import type { CameraCapabilities } from '../crypto/faceAuthVault';
 import { buildOtpAuthUri } from '../crypto/totp';
 import { evaluatePassphraseStrength } from '../crypto/vaultCrypto';
 import type { ServerHealthStatus } from '../storage/vaultStorage';
@@ -24,6 +24,7 @@ import type {
   VaultPayload,
 } from '../types/vault';
 import type { ToastTone } from './BottomToastHost';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface SyncBackupViewProps {
   googleUser: User | null;
@@ -40,10 +41,10 @@ interface SyncBackupViewProps {
   onChangeAutoLock: (minutes: number) => Promise<void>;
   onChangePassphrase: (currentPassphrase: string, newPassphrase: string) => Promise<void>;
   onDeleteVault: () => Promise<void>;
-  isBiometricEnrolled: boolean;
-  biometricCapabilities: BiometricCapabilities;
-  onEnrollBiometric: () => Promise<void>;
-  onRemoveBiometric: () => Promise<void>;
+  isFaceEnrolled: boolean;
+  cameraCapabilities: CameraCapabilities;
+  onOpenFaceEnroll: () => void;
+  onRemoveFaceAuth: () => Promise<void>;
   onToast?: (message: string, tone?: ToastTone) => void;
 }
 
@@ -62,10 +63,10 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
   onChangeAutoLock,
   onChangePassphrase,
   onDeleteVault,
-  isBiometricEnrolled,
-  biometricCapabilities,
-  onEnrollBiometric,
-  onRemoveBiometric,
+  isFaceEnrolled,
+  cameraCapabilities,
+  onOpenFaceEnroll,
+  onRemoveFaceAuth,
   onToast,
 }) => {
   const [currentPass, setCurrentPass] = useState('');
@@ -76,8 +77,7 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
   const [changingPass, setChangingPass] = useState(false);
 
   const [syncing, setSyncing] = useState(false);
-  const [biometricBusy, setBiometricBusy] = useState(false);
-  const [biometricError, setBiometricError] = useState('');
+  const [faceRemoving, setFaceRemoving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [plainExportConfirm, setPlainExportConfirm] = useState(false);
 
@@ -437,79 +437,58 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
                 <ScanFace className="w-4 h-4 text-blue-600 dark:text-blue-400 mt-0.5 shrink-0" aria-hidden="true" />
                 <div>
                   <h3 className="text-xs font-bold text-slate-900 dark:text-white">
-                    顔認証・生体認証ロック解除 (WebAuthn)
+                    Webカメラ顔認証ロック解除（ブラウザ内AI認識）
                   </h3>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
-                    {isBiometricEnrolled
-                      ? '登録済み — 手動ロックや自動ロック後に、端末の顔認証・生体認証 (Face ID / Windows Hello) で再解除できます。'
-                      : '一度ロックされた後、マスターパスフレーズを再入力せずに端末の顔認証・生体認証でロック解除できるよう登録します。'}
+                    {isFaceEnrolled
+                      ? '登録済み — 端末OS（Windows Hello / Face ID）に依存せず、Web内のカメラ顔認識だけで再解除できます。'
+                      : '端末OSの生体認証を使わず、Webブラウザ内のAI顔認識（128次元特徴ベクトル照合）でロック解除できるよう登録します。'}
                   </p>
                 </div>
               </div>
               <span
                 className={`text-[11px] font-semibold whitespace-nowrap shrink-0 ${
-                  isBiometricEnrolled
+                  isFaceEnrolled
                     ? 'text-emerald-700 dark:text-emerald-400'
                     : 'text-slate-500 dark:text-slate-400'
                 }`}
               >
-                {isBiometricEnrolled ? '登録済み' : '未登録'}
+                {isFaceEnrolled ? '登録済み' : '未登録'}
               </span>
             </div>
 
-            {biometricError && (
-              <p className="text-xs text-red-600 dark:text-red-400">{biometricError}</p>
-            )}
-
-            {!biometricCapabilities.supported ? (
+            {!cameraCapabilities.supported ? (
               <p className="text-[11px] text-amber-700 dark:text-amber-300">
-                現在のブラウザは WebAuthn プラットフォーム生体認証に対応していません。
+                現在のブラウザはカメラ API (getUserMedia) に対応していません。
               </p>
             ) : (
               <div className="flex flex-wrap items-center gap-2">
                 <motion.button
                   type="button"
                   data-testid="enroll-biometric-settings-btn"
-                  disabled={biometricBusy}
-                  whileHover={{ scale: biometricBusy ? 1 : 1.02 }}
-                  whileTap={{ scale: biometricBusy ? 1 : 0.97 }}
-                  onClick={async () => {
-                    setBiometricError('');
-                    setBiometricBusy(true);
-                    try {
-                      await onEnrollBiometric();
-                    } catch (err) {
-                      setBiometricError(
-                        err instanceof Error ? err.message : '顔認証の登録に失敗しました。'
-                      );
-                    } finally {
-                      setBiometricBusy(false);
-                    }
-                  }}
+                  disabled={faceRemoving}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={onOpenFaceEnroll}
                   className="px-3.5 py-2 text-xs font-semibold rounded-xl glass-primary-btn disabled:opacity-70 inline-flex items-center gap-1.5 whitespace-nowrap"
                 >
-                  {biometricBusy ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
-                  ) : (
-                    <ScanFace className="w-3.5 h-3.5" aria-hidden="true" />
-                  )}
-                  <span>{isBiometricEnrolled ? '顔認証を再登録する' : '顔認証を登録する'}</span>
+                  <ScanFace className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>{isFaceEnrolled ? 'Web顔認証を再登録する' : 'Web顔認証を登録する'}</span>
                 </motion.button>
 
-                {isBiometricEnrolled && (
+                {isFaceEnrolled && (
                   <motion.button
                     type="button"
                     data-testid="remove-biometric-settings-btn"
-                    disabled={biometricBusy}
-                    whileHover={{ scale: biometricBusy ? 1 : 1.02 }}
-                    whileTap={{ scale: biometricBusy ? 1 : 0.97 }}
+                    disabled={faceRemoving}
+                    whileHover={{ scale: faceRemoving ? 1 : 1.02 }}
+                    whileTap={{ scale: faceRemoving ? 1 : 0.97 }}
                     onClick={async () => {
-                      setBiometricError('');
-                      setBiometricBusy(true);
+                      setFaceRemoving(true);
                       try {
-                        await onRemoveBiometric();
+                        await onRemoveFaceAuth();
                       } finally {
-                        setBiometricBusy(false);
+                        setFaceRemoving(false);
                       }
                     }}
                     className="px-3 py-2 text-xs font-medium rounded-xl glass-btn text-slate-700 dark:text-slate-200 whitespace-nowrap"
@@ -519,6 +498,21 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
                 )}
               </div>
             )}
+
+            <div className="pt-2 border-t border-slate-900/8 dark:border-white/10 flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                  PWA（オフライン対応アプリ化）
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  端末へインストールするとオフライン時もTOTP生成とWeb顔認証を利用できます
+                </p>
+              </div>
+              <PWAInstallButton
+                compact
+                onInstalled={() => onToast?.('KagiVault をPWAとしてインストールしました', 'success')}
+              />
+            </div>
           </div>
         </motion.section>
       </div>

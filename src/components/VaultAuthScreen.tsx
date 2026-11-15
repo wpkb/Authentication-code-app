@@ -21,7 +21,7 @@ import {
   ShieldCheck,
   Upload,
 } from 'lucide-react';
-import type { BiometricCapabilities } from '../crypto/biometricVault';
+import type { CameraCapabilities } from '../crypto/faceAuthVault';
 import {
   evaluatePassphraseStrength,
   generateStrongPassphrase,
@@ -30,6 +30,7 @@ import type { ServerHealthStatus } from '../storage/vaultStorage';
 import { sanitizeVaultId } from '../storage/vaultStorage';
 import type { EncryptedEnvelope, StorageMode, VaultSummary } from '../types/vault';
 import type { ToastTone } from './BottomToastHost';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface VaultAuthScreenProps {
   googleUser: User | null;
@@ -59,9 +60,9 @@ interface VaultAuthScreenProps {
   }) => Promise<void>;
   onImportEnvelope: (envelope: EncryptedEnvelope, passphrase: string) => Promise<void>;
   onStartDemo: () => Promise<void>;
-  biometricVaultIds: string[];
-  biometricCapabilities: BiometricCapabilities;
-  onBiometricUnlock: (vaultId: string, storageMode: StorageMode) => Promise<void>;
+  faceVaultIds: string[];
+  cameraCapabilities: CameraCapabilities;
+  onOpenFaceUnlock: (vaultId: string, storageMode: StorageMode) => void;
   lockNotice?: string | null;
   onDismissLockNotice?: () => void;
   isDark: boolean;
@@ -86,9 +87,9 @@ export const VaultAuthScreen: React.FC<VaultAuthScreenProps> = ({
   onUnlockVault,
   onImportEnvelope,
   onStartDemo,
-  biometricVaultIds,
-  biometricCapabilities,
-  onBiometricUnlock,
+  faceVaultIds,
+  cameraCapabilities,
+  onOpenFaceUnlock,
   lockNotice,
   onDismissLockNotice,
   isDark,
@@ -112,7 +113,6 @@ export const VaultAuthScreen: React.FC<VaultAuthScreenProps> = ({
   const [importedEnvelope, setImportedEnvelope] = useState<EncryptedEnvelope | null>(null);
   const [importFileName, setImportFileName] = useState<string>('');
   const [submitting, setSubmitting] = useState<boolean>(false);
-  const [biometricLoading, setBiometricLoading] = useState<boolean>(false);
   const [cryptoStep, setCryptoStep] = useState<string>('');
   const [signingIn, setSigningIn] = useState<boolean>(false);
   const [startingDemo, setStartingDemo] = useState<boolean>(false);
@@ -120,10 +120,10 @@ export const VaultAuthScreen: React.FC<VaultAuthScreenProps> = ({
   const [copiedGen, setCopiedGen] = useState<boolean>(false);
 
   const selectedCleanId = sanitizeVaultId(vaultId);
-  const isBiometricReady =
+  const isFaceAuthReady =
     tab === 'unlock' &&
     selectedCleanId.length >= 3 &&
-    biometricVaultIds.includes(selectedCleanId);
+    faceVaultIds.includes(selectedCleanId);
 
   useEffect(() => {
     if (googleUser) {
@@ -195,25 +195,14 @@ export const VaultAuthScreen: React.FC<VaultAuthScreenProps> = ({
     }
   };
 
-  const handleBiometricUnlockClick = async () => {
+  const handleFaceUnlockClick = () => {
     const cleanId = sanitizeVaultId(vaultId);
     if (cleanId.length < 3) {
       setError('ボルトIDを確認してください。');
       return;
     }
     setError('');
-    setBiometricLoading(true);
-    try {
-      await onBiometricUnlock(cleanId, storageMode);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : '顔認証でのロック解除に失敗しました。マスターパスフレーズをお試しください。'
-      );
-    } finally {
-      setBiometricLoading(false);
-    }
+    onOpenFaceUnlock(cleanId, storageMode);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -337,7 +326,11 @@ export const VaultAuthScreen: React.FC<VaultAuthScreenProps> = ({
             <span className="text-lg font-bold tracking-tight">KagiVault</span>
           </div>
 
-          <div className="flex items-center gap-3 sm:gap-4 shrink-0">
+          <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
+            <PWAInstallButton
+              compact
+              onInstalled={() => onToast?.('KagiVault をPWAアプリとしてインストールしました', 'success')}
+            />
             <motion.button
               type="button"
               whileHover={{ scale: 1.03 }}
@@ -656,7 +649,7 @@ export const VaultAuthScreen: React.FC<VaultAuthScreenProps> = ({
           </div>
 
           <AnimatePresence>
-            {isBiometricReady && (
+            {isFaceAuthReady && (
               <motion.div
                 key={`biometric-unlock-card-${selectedCleanId}`}
                 initial={{ opacity: 0, y: 10, scale: 0.98 }}
@@ -671,42 +664,33 @@ export const VaultAuthScreen: React.FC<VaultAuthScreenProps> = ({
                   </div>
                   <div className="min-w-0 flex-1">
                     <h2 className="text-sm font-bold text-slate-900 dark:text-white">
-                      顔認証・生体認証でロック解除
+                      Webカメラ顔認証でロック解除
                     </h2>
                     <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5 leading-relaxed">
-                      登録済みの生体認証 (Face ID / Windows Hello) を確認し、ボルト「
+                      端末OSに依存せずブラウザ内で完結するAI顔認識により、ボルト「
                       <span className="font-mono font-semibold">{selectedCleanId}</span>
                       」をパスフレーズ入力なしで復号します。
                     </p>
                   </div>
                 </div>
 
-                {!biometricCapabilities.supported && (
+                {!cameraCapabilities.supported && (
                   <p className="text-[11px] text-amber-800 dark:text-amber-200">
-                    現在のブラウザは WebAuthn に対応していません。下のマスターパスフレーズをご利用ください。
+                    現在のブラウザ環境ではカメラ API を利用できません。下のマスターパスフレーズをご利用ください。
                   </p>
                 )}
 
                 <motion.button
                   type="button"
                   data-testid="biometric-unlock-btn"
-                  disabled={biometricLoading || submitting || !biometricCapabilities.supported}
-                  whileHover={{ scale: biometricLoading ? 1 : 1.02 }}
-                  whileTap={{ scale: biometricLoading ? 1 : 0.97 }}
-                  onClick={() => void handleBiometricUnlockClick()}
+                  disabled={submitting || !cameraCapabilities.supported}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={handleFaceUnlockClick}
                   className="w-full py-2.5 px-4 rounded-xl glass-primary-btn disabled:opacity-70 text-sm font-semibold inline-flex items-center justify-center gap-2 transition-colors"
                 >
-                  {biometricLoading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
-                      <span>顔認証を確認中...</span>
-                    </>
-                  ) : (
-                    <>
-                      <ScanFace className="w-4 h-4" aria-hidden="true" />
-                      <span>顔認証でロック解除</span>
-                    </>
-                  )}
+                  <ScanFace className="w-4 h-4" aria-hidden="true" />
+                  <span>顔認証でロック解除</span>
                 </motion.button>
 
                 <div className="flex items-center gap-2 pt-1 text-[11px] text-slate-500 dark:text-slate-400">
