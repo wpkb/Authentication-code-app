@@ -1,0 +1,120 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net: deny all reads and writes by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 3 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'photoURL', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid == userId && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 256
+        && data.displayName is string && data.displayName.size() <= 128
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 512))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCloudVault(data, userId, vaultId) {
+      return data.keys().hasAll([
+          'vaultId', 'ownerId', 'version', 'kdf', 'iterations',
+          'cipher', 'salt', 'iv', 'ciphertext', 'checksum',
+          'revision', 'clientUpdatedAt', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'vaultId', 'ownerId', 'version', 'kdf', 'iterations',
+          'cipher', 'salt', 'iv', 'ciphertext', 'checksum',
+          'revision', 'clientUpdatedAt', 'createdAt', 'updatedAt'
+        ])
+        && data.vaultId is string && data.vaultId == vaultId
+        && data.vaultId.size() >= 3 && data.vaultId.size() <= 48
+        && data.vaultId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.ownerId is string && data.ownerId == userId
+        && data.ownerId.size() >= 1 && data.ownerId.size() <= 128
+        && data.version is number && data.version == 1
+        && data.kdf is string && data.kdf == 'PBKDF2-SHA256'
+        && data.iterations is number && data.iterations >= 100000 && data.iterations <= 2000000
+        && data.cipher is string && data.cipher == 'AES-256-GCM'
+        && data.salt is string && data.salt.size() >= 8 && data.salt.size() <= 256
+        && data.iv is string && data.iv.size() >= 8 && data.iv.size() <= 128
+        && data.ciphertext is string && data.ciphertext.size() >= 16 && data.ciphertext.size() <= 900000
+        && data.checksum is string && data.checksum.size() == 64
+        && data.revision is number && data.revision >= 1
+        && data.clientUpdatedAt is string && data.clientUpdatedAt.size() >= 10 && data.clientUpdatedAt.size() <= 64
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Private user profile documents (strictly owner-only)
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'photoURL', 'updatedAt']);
+      allow delete: if isValidId(userId) && isOwner(userId);
+
+      // Encrypted zero-knowledge TOTP vaults owned by the user
+      match /vaults/{vaultId} {
+        allow get: if isValidId(userId) && isValidId(vaultId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.ownerId == request.auth.uid;
+        allow create: if isValidId(userId)
+          && isValidId(vaultId)
+          && isOwner(userId)
+          && exists(/databases/$(database)/documents/users/$(userId))
+          && isValidCloudVault(incoming(), userId, vaultId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isValidId(userId)
+          && isValidId(vaultId)
+          && isOwner(userId)
+          && isValidCloudVault(incoming(), userId, vaultId)
+          && incoming().ownerId == existing().ownerId
+          && incoming().vaultId == existing().vaultId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'version', 'kdf', 'iterations', 'cipher', 'salt', 'iv',
+            'ciphertext', 'checksum', 'revision', 'clientUpdatedAt', 'updatedAt'
+          ]);
+        allow delete: if isValidId(userId) && isValidId(vaultId) && isOwner(userId);
+      }
+    }
+  }
+}

@@ -1,0 +1,155 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private Google-authenticated user profile metadata.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Firebase Authentication UID"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 256,
+          "description": "Verified Google account email"
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "User display name"
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 512,
+          "description": "Profile avatar URL"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of initial profile creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last profile update"
+        }
+      },
+      "required": ["uid", "email", "displayName", "createdAt", "updatedAt"]
+    },
+    "CloudVault": {
+      "title": "CloudVault",
+      "description": "Zero-knowledge AES-256-GCM encrypted TOTP vault envelope stored per authenticated user.",
+      "type": "object",
+      "properties": {
+        "vaultId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 48,
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "description": "Sanitized vault identifier"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Owner Firebase Auth UID"
+        },
+        "version": {
+          "type": "number",
+          "description": "Envelope schema version"
+        },
+        "kdf": {
+          "type": "string",
+          "enum": ["PBKDF2-SHA256"],
+          "description": "Key derivation function"
+        },
+        "iterations": {
+          "type": "number",
+          "description": "PBKDF2 iteration count"
+        },
+        "cipher": {
+          "type": "string",
+          "enum": ["AES-256-GCM"],
+          "description": "Symmetric authenticated encryption cipher"
+        },
+        "salt": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 256,
+          "description": "Base64-encoded KDF salt"
+        },
+        "iv": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128,
+          "description": "Base64-encoded 96-bit GCM IV"
+        },
+        "ciphertext": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 900000,
+          "description": "Base64-encoded AES-256-GCM encrypted vault payload"
+        },
+        "checksum": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "description": "SHA-256 integrity digest"
+        },
+        "revision": {
+          "type": "number",
+          "description": "Monotonic vault revision counter"
+        },
+        "clientUpdatedAt": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "ISO timestamp when envelope was encrypted on client"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of initial vault creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last vault update"
+        }
+      },
+      "required": [
+        "vaultId",
+        "ownerId",
+        "version",
+        "kdf",
+        "iterations",
+        "cipher",
+        "salt",
+        "iv",
+        "ciphertext",
+        "checksum",
+        "revision",
+        "clientUpdatedAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "Private user profile document keyed by Firebase Auth UID"
+    },
+    "/users/{userId}/vaults/{vaultId}": {
+      "schema": {
+        "$ref": "#/entities/CloudVault"
+      },
+      "description": "Encrypted zero-knowledge 2FA vault documents owned by the user"
+    }
+  }
+}

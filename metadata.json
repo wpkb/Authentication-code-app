@@ -1,0 +1,6 @@
+{
+  "name": "KagiVault",
+  "description": "ゼロ知識AES-256-GCM暗号化とサーバー・Cookieハイブリッド保存を備えたWeb二段階認証(2FA/TOTP)ボルト",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
