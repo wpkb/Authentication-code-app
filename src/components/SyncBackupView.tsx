@@ -2,12 +2,16 @@ import React, { useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import type { User } from 'firebase/auth';
 import {
+  CheckCircle2,
+  Clock,
   Cloud,
   Cookie,
   Download,
+  History,
   KeyRound,
   Loader2,
   RefreshCw,
+  RotateCcw,
   ScanFace,
   Server,
   ShieldCheck,
@@ -16,6 +20,11 @@ import {
 import type { CameraCapabilities } from '../crypto/faceAuthVault';
 import { buildOtpAuthUri } from '../crypto/totp';
 import { evaluatePassphraseStrength } from '../crypto/vaultCrypto';
+import type {
+  AutoBackupFrequency,
+  AutoBackupSettings,
+  AutoBackupSnapshot,
+} from '../storage/autoBackupStore';
 import type { ServerHealthStatus } from '../storage/vaultStorage';
 import type {
   EncryptedEnvelope,
@@ -45,6 +54,12 @@ interface SyncBackupViewProps {
   cameraCapabilities: CameraCapabilities;
   onOpenFaceEnroll: () => void;
   onRemoveFaceAuth: () => Promise<void>;
+  autoBackupSettings: AutoBackupSettings;
+  autoBackupSnapshots: AutoBackupSnapshot[];
+  onChangeAutoBackupSettings: (next: AutoBackupSettings) => void;
+  onCreateBackupNow: () => Promise<void>;
+  onRestoreBackupSnapshot: (snapshot: AutoBackupSnapshot) => Promise<void>;
+  onDeleteBackupSnapshot: (snapshotId: string) => Promise<void>;
   onToast?: (message: string, tone?: ToastTone) => void;
 }
 
@@ -67,6 +82,12 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
   cameraCapabilities,
   onOpenFaceEnroll,
   onRemoveFaceAuth,
+  autoBackupSettings,
+  autoBackupSnapshots,
+  onChangeAutoBackupSettings,
+  onCreateBackupNow,
+  onRestoreBackupSnapshot,
+  onDeleteBackupSnapshot,
   onToast,
 }) => {
   const [currentPass, setCurrentPass] = useState('');
@@ -77,11 +98,31 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
   const [changingPass, setChangingPass] = useState(false);
 
   const [syncing, setSyncing] = useState(false);
+  const [creatingBackup, setCreatingBackup] = useState(false);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+  const [confirmRestoreId, setConfirmRestoreId] = useState<string | null>(null);
   const [faceRemoving, setFaceRemoving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [plainExportConfirm, setPlainExportConfirm] = useState(false);
 
   const newStrength = evaluatePassphraseStrength(newPass);
+
+  const handleDownloadSnapshot = (snap: AutoBackupSnapshot) => {
+    const blob = new Blob([JSON.stringify(snap.envelope, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const stamp = snap.createdAt.slice(0, 16).replace(/[:T]/g, '-');
+    a.download = `${snap.vaultId}-rev${snap.revision}-${stamp}.kagivault.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    onToast?.(
+      `自動バックアップ (Rev.${snap.revision}) を .kagivault.json で保存しました`,
+      'success'
+    );
+  };
 
   const handleManualSync = async () => {
     setSyncing(true);
@@ -308,12 +349,252 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
         </div>
       </motion.section>
 
-      {/* Trusted Browser & Auto Lock */}
+      {/* Auto Backup + Export & Trusted Browser Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Automatic Backup & Snapshot History Section */}
         <motion.section
+          data-testid="auto-backup-section"
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ type: 'spring', stiffness: 320, damping: 26, delay: 0.06 }}
+          className="glass-surface rounded-2xl p-6 space-y-4 lg:col-span-2"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <div className="w-9 h-9 rounded-xl glass-primary-btn flex items-center justify-center shrink-0">
+                <History className="w-4 h-4 text-white" aria-hidden="true" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-slate-900 dark:text-white">
+                  自動バックアップ（世代管理・復元）
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
+                  変更時や指定間隔ごとに AES-256-GCM 暗号化済みのスナップショットをブラウザ内 (IndexedDB) に自動保存します。誤削除時でも過去の世代へワンクリックで復元できます。
+                </p>
+              </div>
+            </div>
+
+            <motion.button
+              type="button"
+              data-testid="create-backup-now-btn"
+              disabled={creatingBackup}
+              whileHover={{ scale: creatingBackup ? 1 : 1.03 }}
+              whileTap={{ scale: creatingBackup ? 1 : 0.96 }}
+              onClick={async () => {
+                setCreatingBackup(true);
+                try {
+                  await onCreateBackupNow();
+                } finally {
+                  setCreatingBackup(false);
+                }
+              }}
+              className="px-3.5 py-2 text-xs font-semibold rounded-xl glass-primary-btn disabled:opacity-70 inline-flex items-center gap-1.5 whitespace-nowrap self-start shrink-0"
+            >
+              {creatingBackup ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+              ) : (
+                <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" />
+              )}
+              <span>今すぐバックアップを作成</span>
+            </motion.button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-4 rounded-2xl glass-subtle">
+            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                data-testid="auto-backup-toggle"
+                checked={autoBackupSettings.enabled}
+                onChange={(e) =>
+                  onChangeAutoBackupSettings({
+                    ...autoBackupSettings,
+                    enabled: e.target.checked,
+                    frequency:
+                      e.target.checked && autoBackupSettings.frequency === 'off'
+                        ? 'on-change'
+                        : autoBackupSettings.frequency,
+                  })
+                }
+                className="rounded border-slate-300 text-blue-600 focus:ring-blue-600"
+              />
+              <div>
+                <span className="block text-xs font-semibold text-slate-900 dark:text-white">
+                  自動バックアップを有効にする
+                </span>
+                <span className="block text-[11px] text-slate-500 dark:text-slate-400 tabular-nums">
+                  保存済み世代: {autoBackupSnapshots.length} / 最大 {autoBackupSettings.maxSnapshots}
+                </span>
+              </div>
+            </label>
+
+            <div>
+              <label
+                htmlFor="auto-backup-frequency"
+                className="block text-[11px] font-medium text-slate-600 dark:text-slate-400 mb-1"
+              >
+                自動保存タイミング
+              </label>
+              <select
+                id="auto-backup-frequency"
+                data-testid="auto-backup-frequency"
+                value={autoBackupSettings.frequency}
+                onChange={(e) => {
+                  const freq = e.target.value as AutoBackupFrequency;
+                  onChangeAutoBackupSettings({
+                    ...autoBackupSettings,
+                    frequency: freq,
+                    enabled: freq !== 'off',
+                  });
+                }}
+                className="w-full px-3 py-1.5 text-xs rounded-xl glass-input text-slate-900 dark:text-slate-100 [&_option]:bg-white dark:[&_option]:bg-slate-900"
+              >
+                <option value="on-change">変更ごとに自動保存 (推奨)</option>
+                <option value="every-15m">変更時 ＋ 15分ごとに自動保存</option>
+                <option value="every-1h">変更時 ＋ 1時間ごとに自動保存</option>
+                <option value="off">自動オフ（手動のみ）</option>
+              </select>
+            </div>
+
+            <div>
+              <label
+                htmlFor="auto-backup-retention"
+                className="block text-[11px] font-medium text-slate-600 dark:text-slate-400 mb-1"
+              >
+                最大保持世代数
+              </label>
+              <select
+                id="auto-backup-retention"
+                value={autoBackupSettings.maxSnapshots}
+                onChange={(e) =>
+                  onChangeAutoBackupSettings({
+                    ...autoBackupSettings,
+                    maxSnapshots: Number(e.target.value),
+                  })
+                }
+                className="w-full px-3 py-1.5 text-xs rounded-xl glass-input text-slate-900 dark:text-slate-100 [&_option]:bg-white dark:[&_option]:bg-slate-900"
+              >
+                <option value={5}>最新 5世代まで保持</option>
+                <option value={10}>最新 10世代まで保持 (推奨)</option>
+                <option value={20}>最新 20世代まで保持</option>
+              </select>
+            </div>
+          </div>
+
+          {autoBackupSnapshots.length === 0 ? (
+            <div className="p-4 rounded-2xl glass-subtle text-center text-xs text-slate-500 dark:text-slate-400">
+              まだバックアップ履歴がありません。上の「今すぐバックアップを作成」またはアカウント追加時に自動保存されます。
+            </div>
+          ) : (
+            <div
+              data-testid="auto-backup-list"
+              className="space-y-2 max-h-64 overflow-y-auto pr-1"
+            >
+              {autoBackupSnapshots.map((snap) => {
+                const reasonLabel =
+                  snap.reason === 'auto-change'
+                    ? '変更時自動'
+                    : snap.reason === 'auto-schedule'
+                    ? '定期自動'
+                    : '手動作成';
+                const formattedDate = new Date(snap.createdAt).toLocaleString('ja-JP', {
+                  month: '2-digit',
+                  day: '2-digit',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                });
+                const isConfirmingRestore = confirmRestoreId === snap.id;
+                const isRestoring = restoringId === snap.id;
+
+                return (
+                  <div
+                    key={snap.id}
+                    className="p-3 rounded-xl glass-subtle flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <Clock className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" aria-hidden="true" />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono font-semibold text-slate-900 dark:text-white tabular-nums">
+                            {formattedDate}
+                          </span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-700 dark:text-blue-300 font-medium">
+                            {reasonLabel}
+                          </span>
+                          <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 tabular-nums">
+                            Rev.{snap.revision} · {snap.accountCount}件 · {(snap.bytes / 1024).toFixed(1)} KB
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadSnapshot(snap)}
+                        className="px-2.5 py-1.5 text-[11px] font-medium rounded-lg glass-btn text-slate-700 dark:text-slate-200 inline-flex items-center gap-1"
+                      >
+                        <Download className="w-3 h-3" aria-hidden="true" />
+                        JSON保存
+                      </button>
+
+                      {isConfirmingRestore ? (
+                        <div className="inline-flex items-center gap-1">
+                          <button
+                            type="button"
+                            disabled={isRestoring}
+                            onClick={async () => {
+                              setRestoringId(snap.id);
+                              try {
+                                await onRestoreBackupSnapshot(snap);
+                                setConfirmRestoreId(null);
+                              } finally {
+                                setRestoringId(null);
+                              }
+                            }}
+                            className="px-2.5 py-1.5 text-[11px] font-semibold rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-70"
+                          >
+                            {isRestoring ? '復元中...' : 'この時点へ復元'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmRestoreId(null)}
+                            className="px-2 py-1.5 text-[11px] rounded-lg glass-btn text-slate-600 dark:text-slate-300"
+                          >
+                            中止
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmRestoreId(snap.id)}
+                          className="px-2.5 py-1.5 text-[11px] font-medium rounded-lg glass-btn text-slate-700 dark:text-slate-200 inline-flex items-center gap-1"
+                        >
+                          <RotateCcw className="w-3 h-3" aria-hidden="true" />
+                          復元
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        aria-label="このバックアップを削除"
+                        onClick={() => void onDeleteBackupSnapshot(snap.id)}
+                        className="p-1.5 rounded-lg glass-btn text-slate-500 hover:text-red-600 dark:hover:text-red-400"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </motion.section>
+
+        <motion.section
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ type: 'spring', stiffness: 320, damping: 26, delay: 0.08 }}
           className="glass-surface rounded-2xl p-6 space-y-4"
         >
           <h2 className="text-base font-bold text-slate-900 dark:text-white">

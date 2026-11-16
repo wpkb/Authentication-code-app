@@ -6,6 +6,46 @@ const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365; // 1 year
 const PREF_ACTIVE_VAULT = 'kv_active_vault';
 const PREF_STORAGE_MODE = 'kv_storage_mode';
 const PREF_KNOWN_VAULTS = 'kv_known_vaults';
+const BROWSER_KNOWN_VAULTS_KEY = 'kv_browser_known_vault_ids';
+
+export function getBrowserKnownVaultIds(): string[] {
+  try {
+    if (typeof localStorage === 'undefined') return [];
+    const raw = localStorage.getItem(BROWSER_KNOWN_VAULTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === 'string' && id.length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function addBrowserKnownVaultId(vaultId: string): void {
+  if (!vaultId) return;
+  try {
+    if (typeof localStorage === 'undefined') return;
+    const next = Array.from(new Set([vaultId, ...getBrowserKnownVaultIds()])).slice(0, 20);
+    localStorage.setItem(BROWSER_KNOWN_VAULTS_KEY, JSON.stringify(next));
+  } catch {
+    // ignore
+  }
+}
+
+export function removeBrowserKnownVaultId(vaultId: string): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    const next = getBrowserKnownVaultIds().filter((id) => id !== vaultId);
+    if (next.length === 0) {
+      localStorage.removeItem(BROWSER_KNOWN_VAULTS_KEY);
+    } else {
+      localStorage.setItem(BROWSER_KNOWN_VAULTS_KEY, JSON.stringify(next));
+    }
+  } catch {
+    // ignore
+  }
+}
 
 export interface CookieStoreLike {
   getCookieString(): string;

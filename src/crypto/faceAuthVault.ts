@@ -19,6 +19,7 @@ export interface InWebFaceVaultRecord {
   iterations: number;
   enrolledAt: string;
   sampleCount: number;
+  strictVersion?: number;
 }
 
 export interface CameraCapabilities {
@@ -27,10 +28,11 @@ export interface CameraCapabilities {
 }
 
 export interface LiveFaceDetection {
-  box: { x: number; y: number; width: number; height: number };
-  score: number;
-  landmarks: Array<{ x: number; y: number }>;
-  descriptor: number[];
+  status: 'ok' | 'no-face' | 'multiple-faces' | 'too-small' | 'low-quality';
+  box?: { x: number; y: number; width: number; height: number };
+  score?: number;
+  landmarks?: Array<{ x: number; y: number }>;
+  descriptor?: number[];
 }
 
 export interface FaceVerifyOutcome extends FaceMatchEvaluation {
@@ -44,7 +46,8 @@ export interface FaceVerifyOutcome extends FaceMatchEvaluation {
 type FaceApiModule = typeof import('@vladmandic/face-api');
 
 let faceApiPromise: Promise<FaceApiModule> | null = null;
-let modelsLoadPromise: Promise<FaceApiModule> | null = null;
+let modelsLoadPromise: Promise<{ faceapi: FaceApiModule; useCpuTinyDetector: boolean }> | null =
+  null;
 
 async function getFaceApi(): Promise<FaceApiModule> {
   if (!faceApiPromise) {
@@ -73,18 +76,19 @@ function isSoftwareWebGLRenderer(): boolean {
 
 export async function loadFaceModels(
   onStep?: (message: string) => void
-): Promise<FaceApiModule> {
+): Promise<{ faceapi: FaceApiModule; useCpuTinyDetector: boolean }> {
   if (!modelsLoadPromise) {
     modelsLoadPromise = (async () => {
-      onStep?.('Web顔認識エンジンを読み込み中...');
+      onStep?.('高精度Web顔認識エンジンを読み込み中...');
       const faceapi = await getFaceApi();
+      const softwareGl = isSoftwareWebGLRenderer();
       const tfRef = (faceapi as unknown as {
         tf?: {
           setBackend?: (name: string) => Promise<boolean>;
           ready?: () => Promise<void>;
         };
       }).tf;
-      if (tfRef?.setBackend && isSoftwareWebGLRenderer()) {
+      if (tfRef?.setBackend && softwareGl) {
         try {
           await tfRef.setBackend('cpu');
         } catch {
@@ -95,13 +99,15 @@ export async function loadFaceModels(
         await tfRef.ready();
       }
 
-      onStep?.('顔検出・68点特徴点・128次元識別モデルを読み込み中...');
+      onStep?.('顔検出・精密68点ランドマーク・128次元識別モデルを読み込み中...');
       await Promise.all([
-        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URI),
-        faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URI),
+        softwareGl
+          ? faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URI)
+          : faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URI),
+        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URI),
         faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URI),
       ]);
-      return faceapi;
+      return { faceapi, useCpuTinyDetector: softwareGl };
     })().catch((err) => {
       modelsLoadPromise = null;
       throw err;
@@ -112,18 +118,25 @@ export async function loadFaceModels(
 
 export async function detectLiveFace(
   input: HTMLVideoElement | HTMLCanvasElement
-): Promise<LiveFaceDetection | null> {
-  const faceapi = await loadFaceModels();
-  const options = new faceapi.TinyFaceDetectorOptions({
-    inputSize: 224,
-    scoreThreshold: 0.45,
-  });
+): Promise<LiveFaceDetection> {
+  const { faceapi, useCpuTinyDetector } = await loadFaceModels();
+  const options = useCpuTinyDetector
+    ? new faceapi.TinyFaceDetectorOptions({
+        inputSize: 320,
+        scoreThreshold: 0.58,
+      })
+    : new faceapi.SsdMobilenetv1Options({
+        minConfidence: 0.62,
+        maxResults: 5,
+      });
 
   const srcWidth = input instanceof HTMLVideoElement ? input.videoWidth : input.width;
   const srcHeight = input instanceof HTMLVideoElement ? input.videoHeight : input.height;
-  if (!srcWidth || !srcHeight) return null;
+  if (!srcWidth || !srcHeight) {
+    return { status: 'no-face' };
+  }
 
-  const targetWidth = Math.min(400, srcWidth);
+  const targetWidth = Math.min(480, srcWidth);
   const scale = targetWidth / srcWidth;
   const targetHeight = Math.max(1, Math.round(srcHeight * scale));
 
@@ -135,19 +148,30 @@ export async function detectLiveFace(
     scratchCanvas.height = targetHeight;
   }
   const ctx = scratchCanvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) return null;
+  if (!ctx) return { status: 'no-face' };
   ctx.drawImage(input, 0, 0, targetWidth, targetHeight);
 
-  const detection = await faceapi
-    .detectSingleFace(scratchCanvas, options)
-    .withFaceLandmarks(true)
-    .withFaceDescriptor();
+  // Full 68-landmark alignment (useTinyLandmark = false) + reject multi-person frames
+  const detections = await faceapi
+    .detectAllFaces(scratchCanvas, options)
+    .withFaceLandmarks(false)
+    .withFaceDescriptors();
 
-  if (!detection) return null;
+  if (detections.length === 0) {
+    return { status: 'no-face' };
+  }
 
+  if (detections.length > 1) {
+    return { status: 'multiple-faces' };
+  }
+
+  const detection = detections[0];
   const invScale = 1 / scale;
   const { box, score } = detection.detection;
-  return {
+  const faceRatio = box.width / targetWidth;
+
+  const result: LiveFaceDetection = {
+    status: 'ok',
     box: {
       x: box.x * invScale,
       y: box.y * invScale,
@@ -161,6 +185,14 @@ export async function detectLiveFace(
     })),
     descriptor: Array.from(detection.descriptor),
   };
+
+  if (faceRatio < 0.16) {
+    return { ...result, status: 'too-small' };
+  }
+  if (score < 0.6) {
+    return { ...result, status: 'low-quality' };
+  }
+  return result;
 }
 
 export function detectCameraCapabilities(): CameraCapabilities {
@@ -299,6 +331,7 @@ export async function saveEnrolledFaceForVault(params: {
     iterations: params.iterations,
     enrolledAt: new Date().toISOString(),
     sampleCount: params.samples.length,
+    strictVersion: 2,
   };
 
   const db = await openFaceDb();

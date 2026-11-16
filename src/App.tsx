@@ -36,7 +36,11 @@ import { PWAInstallButton } from './components/PWAInstallButton';
 import { QrExportModal } from './components/QrExportModal';
 import { RecoveryCodesModal } from './components/RecoveryCodesModal';
 import { SecurityAuditView } from './components/SecurityAuditView';
-import { StartupLoadingModal, type StartupPhase } from './components/StartupLoadingModal';
+import {
+  StartupLoadingModal,
+  type StartupPhase,
+  type StartupUnlockReason,
+} from './components/StartupLoadingModal';
 import { SyncBackupView } from './components/SyncBackupView';
 import { TotpCard } from './components/TotpCard';
 import { VaultAuthScreen } from './components/VaultAuthScreen';
@@ -96,7 +100,25 @@ import type {
   VaultSummary,
 } from './types/vault';
 import { createDemoVaultPayload } from './utils/demoData';
+import {
+  clearAutoBackupsForVault,
+  deleteAutoBackupSnapshot,
+  listAutoBackupSnapshots,
+  loadAutoBackupSettings,
+  saveAutoBackupSettings,
+  saveAutoBackupSnapshot,
+  type AutoBackupSettings,
+  type AutoBackupSnapshot,
+} from './storage/autoBackupStore';
+import {
+  checkPersistedAutoLockExpiry,
+  clearUnlockedActivitySession,
+  isAutoLockExpired,
+  recordUnlockedActivity,
+  updatePersistedAutoLockMinutes,
+} from './utils/autoLockPolicy';
 import { runVaultSecurityAudit } from './utils/securityAudit';
+import { resolveStartupUnlockTarget } from './utils/startupUnlockTarget';
 
 type ActiveSection = 'all' | 'favorites' | 'autofill' | 'audit' | 'sync';
 
@@ -111,6 +133,10 @@ function readPersistedLockFlag(): boolean {
   } catch {
     return false;
   }
+}
+
+function getInitialStartupExpiry() {
+  return checkPersistedAutoLockExpiry(Date.now());
 }
 
 interface ActiveCryptoSession {
@@ -174,9 +200,12 @@ export default function App() {
   const [envelope, setEnvelope] = useState<EncryptedEnvelope | null>(null);
   const [syncStatus, setSyncStatus] = useState<StorageSyncResult | null>(null);
 
+  const initialExpiryRef = useRef(getInitialStartupExpiry());
   // Non-extractable CryptoKey session
   const activeKeyRef = useRef<ActiveCryptoSession | null>(null);
-  const manualLockRef = useRef<boolean>(readPersistedLockFlag());
+  const manualLockRef = useRef<boolean>(
+    readPersistedLockFlag() || initialExpiryRef.current.expired
+  );
   const vaultRef = useRef<VaultPayload | null>(null);
   vaultRef.current = vault;
   const trustDeviceRef = useRef<boolean>(trustDevice);
@@ -220,6 +249,14 @@ export default function App() {
     vaultId: '',
     storageMode: 'auto',
   });
+  // Automatic encrypted backup state
+  const [autoBackupSettings, setAutoBackupSettings] = useState<AutoBackupSettings>(() =>
+    loadAutoBackupSettings()
+  );
+  const autoBackupSettingsRef = useRef<AutoBackupSettings>(autoBackupSettings);
+  autoBackupSettingsRef.current = autoBackupSettings;
+  const [autoBackupSnapshots, setAutoBackupSnapshots] = useState<AutoBackupSnapshot[]>([]);
+
   const [faceBannerDismissed, setFaceBannerDismissed] =
     useState<boolean>(false);
 
@@ -227,16 +264,27 @@ export default function App() {
   const isAutostartUrl =
     typeof window !== 'undefined' &&
     new URLSearchParams(window.location.search).get('autostart') === '1';
+  const isAutostartSessionRef = useRef<boolean>(
+    isAutostartUrl && !manualLockRef.current && !initialExpiryRef.current.expired
+  );
+  const [startupUnlockReason, setStartupUnlockReason] = useState<StartupUnlockReason>(() => {
+    if (initialExpiryRef.current.expired) return 'auto-expired';
+    if (readPersistedLockFlag()) return 'locked';
+    return null;
+  });
+  const [startupSubView, setStartupSubView] = useState<'select' | 'password'>('select');
   const [startupPhase, setStartupPhase] = useState<StartupPhase>(
-    isAutostartUrl || manualLockRef.current ? 'idle' : 'checking-auth'
+    isAutostartSessionRef.current ? 'idle' : 'checking-auth'
   );
   const [startupDetail, setStartupDetail] = useState<string>(
     '認証セッションと保存先を確認しています'
   );
   const skipAutoUnlockRef = useRef<boolean>(false);
+  const autoStartedFaceRef = useRef<boolean>(false);
 
   const markVaultLocked = useCallback(() => {
     manualLockRef.current = true;
+    clearUnlockedActivitySession();
     try {
       localStorage.setItem(LOCKED_STATE_KEY, '1');
     } catch {
@@ -246,6 +294,7 @@ export default function App() {
 
   const clearVaultLocked = useCallback(() => {
     manualLockRef.current = false;
+    setStartupUnlockReason(null);
     try {
       localStorage.removeItem(LOCKED_STATE_KEY);
     } catch {
@@ -253,14 +302,24 @@ export default function App() {
     }
   }, []);
 
+  // Persist auto-expired lock state cleanly after mount if startup check detected >= autoLockMinutes idle
+  useEffect(() => {
+    if (initialExpiryRef.current.expired) {
+      markVaultLocked();
+    }
+  }, [markVaultLocked]);
+
   // Bottom Toast stack & Lock notice
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const toastTimersRef = useRef<Map<string, number>>(new Map());
-  const [lockNotice, setLockNotice] = useState<string | null>(() =>
-    readPersistedLockFlag()
+  const [lockNotice, setLockNotice] = useState<string | null>(() => {
+    if (initialExpiryRef.current.expired) {
+      return `前回の操作から${initialExpiryRef.current.thresholdMinutes}分以上経過したため自動ロックしました。Web顔認証またはパスワードでロック解除してください。`;
+    }
+    return readPersistedLockFlag()
       ? 'ボルトはロックされています。再アクセスするには顔認証またはマスターパスフレーズでロック解除してください。'
-      : null
-  );
+      : null;
+  });
 
   const dismissToast = useCallback((id: string) => {
     const existingTimer = toastTimersRef.current.get(id);
@@ -337,10 +396,22 @@ export default function App() {
       setGoogleUser(user);
       setAuthLoading(false);
 
+      // Re-verify persisted inactivity expiration before attempting any auto-unlock
+      const runtimeExpiry = checkPersistedAutoLockExpiry(Date.now());
+      if (runtimeExpiry.expired) {
+        markVaultLocked();
+        setStartupUnlockReason('auto-expired');
+        setLockNotice(
+          `前回の操作から${runtimeExpiry.thresholdMinutes}分以上経過したため自動ロックしました。Web顔認証またはパスワードでロック解除してください。`
+        );
+      }
+
+      let loadedVaults: VaultSummary[] = [];
+
       try {
         if (user) {
           const explicitlyLocked = manualLockRef.current || readPersistedLockFlag();
-          if (!skipAutoUnlockRef.current && !explicitlyLocked) {
+          if (!skipAutoUnlockRef.current && !isAutostartSessionRef.current) {
             setStartupPhase('fetching-vaults');
             setStartupDetail(
               `${user.email || 'Googleアカウント'} の保存済みボルトを読み込み中...`
@@ -355,6 +426,7 @@ export default function App() {
             checkServerHealth(),
             listAvailableVaults(user),
           ]);
+          loadedVaults = vaults;
           setServerHealth(health);
           setAvailableVaults(vaults);
 
@@ -362,14 +434,15 @@ export default function App() {
             handleSelectStorageMode('cloud');
           }
 
-          // Attempt trusted browser auto-unlock if not manually locked, skipped, or in Session Only mode
+          // Attempt trusted browser auto-unlock only if not locked, not expired, and not Session Only
           if (
             !explicitlyLocked &&
             !manualLockRef.current &&
             !vaultRef.current &&
             trustDeviceRef.current &&
             !sessionOnlyLockRef.current &&
-            !skipAutoUnlockRef.current
+            !skipAutoUnlockRef.current &&
+            !runtimeExpiry.expired
           ) {
             const candidateIds = Array.from(
               new Set(
@@ -397,12 +470,15 @@ export default function App() {
 
               try {
                 const decrypted = await decryptVaultWithKey(loaded.envelope, trusted.key);
+                const nowMs = Date.now();
                 activeKeyRef.current = {
                   key: trusted.key,
                   saltB64: trusted.saltB64,
                   iterations: trusted.iterations,
                 };
-                lastActivityRef.current = Date.now();
+                lastActivityRef.current = nowMs;
+                recordUnlockedActivity(decrypted.autoLockMinutes, nowMs);
+                clearVaultLocked();
                 setLockNotice(null);
                 setVault(decrypted);
                 setEnvelope(loaded.envelope);
@@ -427,7 +503,7 @@ export default function App() {
             }
           }
         } else {
-          if (!skipAutoUnlockRef.current) {
+          if (!skipAutoUnlockRef.current && !isAutostartSessionRef.current) {
             setStartupPhase('fetching-vaults');
             setStartupDetail('サーバーおよび暗号化Cookieの保存済みボルトを確認中...');
           }
@@ -435,16 +511,64 @@ export default function App() {
             checkServerHealth(),
             listAvailableVaults(null),
           ]);
+          loadedVaults = vaults;
           setServerHealth(health);
           setAvailableVaults(vaults);
         }
-      } finally {
+
+        const enrolledFaceIds = await syncEnrolledFaceVaultIds();
+        setFaceVaultIds(enrolledFaceIds);
+        const camCaps = detectCameraCapabilities();
+
+        if (
+          !vaultRef.current &&
+          !isAutostartSessionRef.current &&
+          !skipAutoUnlockRef.current &&
+          loadedVaults.length > 0
+        ) {
+          if (!runtimeExpiry.expired) {
+            setStartupUnlockReason((prev) =>
+              prev ?? (manualLockRef.current || readPersistedLockFlag() ? 'locked' : 'saved-session')
+            );
+          }
+
+          const target = resolveStartupUnlockTarget({
+            availableVaults: loadedVaults,
+            initialVaultId: getActiveVaultIdPref(),
+            faceEnrolledVaultIds: enrolledFaceIds,
+            cameraSupported: camCaps.supported,
+          });
+
+          if (target.shouldAutoStartFaceAuth && !autoStartedFaceRef.current) {
+            autoStartedFaceRef.current = true;
+            setStartupSubView('select');
+            setStartupPhase('idle');
+            setFaceModal({
+              open: true,
+              mode: 'verify',
+              vaultId: target.vaultId,
+              vaultName: target.vaultId,
+              storageMode: target.storageMode,
+            });
+          } else {
+            setStartupSubView('select');
+            setStartupPhase('choose-unlock');
+          }
+        } else {
+          if (!user && loadedVaults.length === 0 && !vaultRef.current) {
+            clearVaultLocked();
+            clearUnlockedActivitySession();
+            setLockNotice(null);
+          }
+          setStartupPhase('idle');
+        }
+      } catch {
         setStartupPhase('idle');
       }
     });
 
     return () => unsubscribe();
-  }, [handleSelectStorageMode, pushToast]);
+  }, [handleSelectStorageMode, pushToast, markVaultLocked, clearVaultLocked]);
 
   const handleGoogleSignIn = async () => {
     clearVaultLocked();
@@ -477,12 +601,15 @@ export default function App() {
     await clearAllFaceVaultKeys();
     setFaceVaultIds([]);
     clearVaultLocked();
+    clearUnlockedActivitySession();
+    setLockNotice(null);
     await signOut(auth);
     activeKeyRef.current = null;
     setVault(null);
     setPassphrase('');
     setEnvelope(null);
     setTotpMap({});
+    setAutoBackupSnapshots([]);
     handleSelectStorageMode('auto');
     await refreshDiagnostics(null);
     pushToast('Googleアカウントからログアウトしました', 'info');
@@ -513,10 +640,79 @@ export default function App() {
       setActiveVaultIdPref(nextVault.vaultId);
       setInitialVaultId(nextVault.vaultId);
       void refreshDiagnostics(targetUser);
+
+      // Capture encrypted auto-backup snapshot on change (deduplicated by checksum)
+      if (
+        autoBackupSettingsRef.current.enabled &&
+        autoBackupSettingsRef.current.frequency !== 'off'
+      ) {
+        void saveAutoBackupSnapshot({
+          envelope: encrypted,
+          accountCount: nextVault.accounts.length,
+          reason: 'auto-change',
+          settings: autoBackupSettingsRef.current,
+        }).then((bak) => {
+          setAutoBackupSnapshots(bak.snapshots);
+          if (bak.saved) {
+            setAutoBackupSettings(bak.updatedSettings);
+          }
+        });
+      }
+
       return result;
     },
     [storageMode, googleUser, refreshDiagnostics]
   );
+
+  // Sync auto-backup snapshot list when unlocking a vault & run periodic auto-backup scheduler
+  useEffect(() => {
+    if (!vault) {
+      setAutoBackupSnapshots([]);
+      return;
+    }
+
+    let cancelled = false;
+    void listAutoBackupSnapshots(vault.vaultId).then((snaps) => {
+      if (!cancelled) setAutoBackupSnapshots(snaps);
+    });
+
+    if (
+      !autoBackupSettings.enabled ||
+      (autoBackupSettings.frequency !== 'every-15m' &&
+        autoBackupSettings.frequency !== 'every-1h')
+    ) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const timer = window.setInterval(() => {
+      const currentEnv = envelope;
+      const currentVault = vaultRef.current;
+      if (!currentEnv || !currentVault) return;
+      void saveAutoBackupSnapshot({
+        envelope: currentEnv,
+        accountCount: currentVault.accounts.length,
+        reason: 'auto-schedule',
+        settings: autoBackupSettingsRef.current,
+      }).then((bak) => {
+        if (cancelled) return;
+        setAutoBackupSnapshots(bak.snapshots);
+        if (bak.saved) {
+          setAutoBackupSettings(bak.updatedSettings);
+          pushToast(
+            `定期自動バックアップを保存しました (Rev.${currentEnv.revision})`,
+            'info'
+          );
+        }
+      });
+    }, 60_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [vault?.vaultId, envelope, autoBackupSettings.enabled, autoBackupSettings.frequency, pushToast]);
 
   // Real-time Firestore cloud sync when unlocked
   useEffect(() => {
@@ -572,10 +768,13 @@ export default function App() {
       undefined,
       DEFAULT_PBKDF2_ITERATIONS
     );
+    const nowMs = Date.now();
     activeKeyRef.current = derived;
     clearVaultLocked();
-    lastActivityRef.current = Date.now();
+    lastActivityRef.current = nowMs;
+    recordUnlockedActivity(newVault.autoLockMinutes, nowMs);
     setLockNotice(null);
+    setStartupPhase('idle');
 
     handleSelectStorageMode(params.storageMode);
     setTrustDevice(params.trustDevice);
@@ -624,10 +823,13 @@ export default function App() {
       loaded.envelope.salt,
       loaded.envelope.iterations
     );
+    const nowMs = Date.now();
     activeKeyRef.current = derived;
     clearVaultLocked();
-    lastActivityRef.current = Date.now();
+    lastActivityRef.current = nowMs;
+    recordUnlockedActivity(decrypted.autoLockMinutes, nowMs);
     setLockNotice(null);
+    setStartupPhase('idle');
 
     setTrustDevice(params.trustDevice);
     try {
@@ -754,14 +956,17 @@ export default function App() {
         );
       }
 
+      const nowMs = Date.now();
       activeKeyRef.current = {
         key: verifiedSession.key,
         saltB64: verifiedSession.saltB64,
         iterations: verifiedSession.iterations,
       };
       clearVaultLocked();
-      lastActivityRef.current = Date.now();
+      lastActivityRef.current = nowMs;
+      recordUnlockedActivity(decrypted.autoLockMinutes, nowMs);
       setLockNotice(null);
+      setStartupPhase('idle');
       setVault(decrypted);
       setPassphrase('');
       setEnvelope(loaded.envelope);
@@ -801,10 +1006,13 @@ export default function App() {
       imported.salt,
       imported.iterations
     );
+    const nowMs = Date.now();
     activeKeyRef.current = derived;
     clearVaultLocked();
-    lastActivityRef.current = Date.now();
+    lastActivityRef.current = nowMs;
+    recordUnlockedActivity(decrypted.autoLockMinutes, nowMs);
     setLockNotice(null);
+    setStartupPhase('idle');
 
     const nextRev = (imported.revision ?? 1) + 1;
     const res = await persistVault(decrypted, derived, nextRev);
@@ -831,9 +1039,11 @@ export default function App() {
       undefined,
       DEFAULT_PBKDF2_ITERATIONS
     );
+    const nowMs = Date.now();
     activeKeyRef.current = derived;
     clearVaultLocked();
-    lastActivityRef.current = Date.now();
+    lastActivityRef.current = nowMs;
+    recordUnlockedActivity(demoPayload.autoLockMinutes, nowMs);
     setLockNotice(null);
 
     const res = await persistVault(demoPayload, derived, 1, storageMode);
@@ -852,7 +1062,7 @@ export default function App() {
     );
   }, [persistVault, storageMode, pushToast, clearVaultLocked]);
 
-  // ?autostart=1 support (only runs if not explicitly locked, and strips autostart from URL so reloads stay locked)
+  // ?autostart=1 support (only runs if not explicitly locked/expired, and strips autostart from URL so reloads enforce lock)
   useEffect(() => {
     if (autostartRanRef.current) return;
     const url = new URL(window.location.href);
@@ -860,8 +1070,10 @@ export default function App() {
       autostartRanRef.current = true;
       url.searchParams.delete('autostart');
       window.history.replaceState({}, '', url.toString());
-      if (!manualLockRef.current && !readPersistedLockFlag()) {
+      if (!manualLockRef.current && !readPersistedLockFlag() && !initialExpiryRef.current.expired) {
         void handleStartDemo();
+      } else {
+        isAutostartSessionRef.current = false;
       }
     }
   }, [handleStartDemo]);
@@ -986,23 +1198,53 @@ export default function App() {
     }
   }, [googleUser, pushToast]);
 
-  // Auto-lock timer
+  // Auto-lock timer (persists activity timestamps & checks immediately on resume/interaction)
   useEffect(() => {
     if (!vault || vault.autoLockMinutes <= 0) return;
 
-    // Reset activity timestamp whenever a vault session becomes active
-    lastActivityRef.current = Date.now();
+    const initNow = Date.now();
+    lastActivityRef.current = initNow;
+    recordUnlockedActivity(vault.autoLockMinutes, initNow);
     let lastMoveBump = 0;
+    let lastPersistMs = initNow;
+
+    const checkAndLockIfExpired = (): boolean => {
+      const check = isAutoLockExpired({
+        nowMs: Date.now(),
+        lastActivityMs: lastActivityRef.current,
+        autoLockMinutes: vault.autoLockMinutes,
+      });
+      if (check.expired) {
+        lockVault('auto', vault.autoLockMinutes);
+        return true;
+      }
+      return false;
+    };
+
+    const persistThrottled = (now: number) => {
+      if (now - lastPersistMs >= 1000) {
+        lastPersistMs = now;
+        recordUnlockedActivity(vault.autoLockMinutes, now);
+      }
+    };
 
     const bumpActivity = () => {
-      lastActivityRef.current = Date.now();
+      if (checkAndLockIfExpired()) return;
+      const now = Date.now();
+      lastActivityRef.current = now;
+      persistThrottled(now);
     };
     const bumpMoveThrottled = () => {
       const now = Date.now();
       if (now - lastMoveBump >= 1000) {
+        if (checkAndLockIfExpired()) return;
         lastMoveBump = now;
         lastActivityRef.current = now;
+        persistThrottled(now);
       }
+    };
+    const handleResumeCheck = () => {
+      checkAndLockIfExpired();
     };
 
     window.addEventListener('pointerdown', bumpActivity, { passive: true });
@@ -1010,13 +1252,13 @@ export default function App() {
     window.addEventListener('wheel', bumpActivity, { passive: true });
     window.addEventListener('touchstart', bumpActivity, { passive: true });
     window.addEventListener('pointermove', bumpMoveThrottled, { passive: true });
+    document.addEventListener('visibilitychange', handleResumeCheck);
+    window.addEventListener('focus', handleResumeCheck);
+    window.addEventListener('pageshow', handleResumeCheck);
 
     const interval = window.setInterval(() => {
-      const idleMs = Date.now() - lastActivityRef.current;
-      if (idleMs >= vault.autoLockMinutes * 60_000) {
-        lockVault('auto', vault.autoLockMinutes);
-      }
-    }, 10000);
+      checkAndLockIfExpired();
+    }, 5000);
 
     return () => {
       window.removeEventListener('pointerdown', bumpActivity);
@@ -1024,6 +1266,9 @@ export default function App() {
       window.removeEventListener('wheel', bumpActivity);
       window.removeEventListener('touchstart', bumpActivity);
       window.removeEventListener('pointermove', bumpMoveThrottled);
+      document.removeEventListener('visibilitychange', handleResumeCheck);
+      window.removeEventListener('focus', handleResumeCheck);
+      window.removeEventListener('pageshow', handleResumeCheck);
       window.clearInterval(interval);
     };
   }, [vault, lockVault]);
@@ -1245,6 +1490,10 @@ export default function App() {
       autoLockMinutes: minutes,
       updatedAt: new Date().toISOString(),
     };
+    updatePersistedAutoLockMinutes(minutes);
+    if (minutes > 0) {
+      recordUnlockedActivity(minutes, Date.now());
+    }
     await persistVault(nextVault, activeKeyRef.current, (envelope?.revision ?? 1) + 1);
     pushToast(
       minutes > 0
@@ -1309,6 +1558,92 @@ export default function App() {
     pushToast('マスターパスフレーズを変更し、ボルト全体を再暗号化しました', 'success');
   };
 
+  const handleChangeAutoBackupSettings = useCallback(
+    (next: AutoBackupSettings) => {
+      setAutoBackupSettings(next);
+      saveAutoBackupSettings(next);
+      pushToast(
+        next.enabled && next.frequency !== 'off'
+          ? '自動バックアップ設定を更新しました'
+          : '自動バックアップを停止しました',
+        'info'
+      );
+    },
+    [pushToast]
+  );
+
+  const handleCreateBackupNow = useCallback(async () => {
+    const currentVault = vaultRef.current;
+    if (!currentVault) return;
+    let targetEnvelope = envelope;
+    if (!targetEnvelope && activeKeyRef.current) {
+      targetEnvelope = await encryptVaultWithKey(
+        currentVault,
+        activeKeyRef.current.key,
+        activeKeyRef.current.saltB64,
+        activeKeyRef.current.iterations,
+        1
+      );
+    }
+    if (!targetEnvelope) return;
+    const res = await saveAutoBackupSnapshot({
+      envelope: targetEnvelope,
+      accountCount: currentVault.accounts.length,
+      reason: 'manual',
+      settings: autoBackupSettingsRef.current,
+    });
+    setAutoBackupSnapshots(res.snapshots);
+    if (res.saved) {
+      setAutoBackupSettings(res.updatedSettings);
+      pushToast(
+        `暗号化スナップショット (Rev.${targetEnvelope.revision}) を保存しました`,
+        'success'
+      );
+    }
+  }, [envelope, pushToast]);
+
+  const handleRestoreBackupSnapshot = useCallback(
+    async (snapshot: AutoBackupSnapshot) => {
+      if (!activeKeyRef.current) {
+        pushToast('復元するにはボルトのロックを解除してください', 'error');
+        return;
+      }
+      try {
+        const restored = await decryptVaultWithKey(
+          snapshot.envelope,
+          activeKeyRef.current.key
+        );
+        const nextVault: VaultPayload = {
+          ...restored,
+          updatedAt: new Date().toISOString(),
+        };
+        const nextRev = Math.max(envelopeRevisionRef.current, snapshot.revision) + 1;
+        await persistVault(nextVault, activeKeyRef.current, nextRev);
+        pushToast(
+          `バックアップ (Rev.${snapshot.revision} · ${snapshot.accountCount}件) から復元しました`,
+          'success'
+        );
+      } catch {
+        pushToast(
+          'このバックアップは異なるマスターパスフレーズで暗号化されています。ログイン画面の「バックアップ復元」からパスフレーズを入力して復元してください。',
+          'error'
+        );
+      }
+    },
+    [persistVault, pushToast]
+  );
+
+  const handleDeleteBackupSnapshot = useCallback(
+    async (snapshotId: string) => {
+      const targetVaultId = vaultRef.current?.vaultId;
+      if (!targetVaultId) return;
+      const refreshed = await deleteAutoBackupSnapshot(snapshotId, targetVaultId);
+      setAutoBackupSnapshots(refreshed);
+      pushToast('バックアップ履歴を削除しました', 'info');
+    },
+    [pushToast]
+  );
+
   const handleDeleteVault = async () => {
     if (!vault) return;
     const targetId = vault.vaultId;
@@ -1317,6 +1652,8 @@ export default function App() {
     }
     const updatedFaceIds = await removeFaceForVault(targetId);
     setFaceVaultIds(updatedFaceIds);
+    await clearAutoBackupsForVault(targetId);
+    setAutoBackupSnapshots([]);
     await deleteVaultEverywhere(targetId, googleUser);
     if (initialVaultId === targetId) {
       setActiveVaultIdPref(null);
@@ -2282,6 +2619,12 @@ export default function App() {
                         cameraCapabilities={cameraCapabilities}
                         onOpenFaceEnroll={handleOpenFaceEnroll}
                         onRemoveFaceAuth={handleRemoveFaceAuth}
+                        autoBackupSettings={autoBackupSettings}
+                        autoBackupSnapshots={autoBackupSnapshots}
+                        onChangeAutoBackupSettings={handleChangeAutoBackupSettings}
+                        onCreateBackupNow={handleCreateBackupNow}
+                        onRestoreBackupSnapshot={handleRestoreBackupSnapshot}
+                        onDeleteBackupSnapshot={handleDeleteBackupSnapshot}
                         onToast={pushToast}
                       />
                     </motion.div>
@@ -2383,14 +2726,42 @@ export default function App() {
         mode={faceModal.mode}
         vaultId={faceModal.vaultId}
         vaultName={faceModal.vaultName}
+        lockNotice={lockNotice}
         onClose={handleCloseFaceModal}
+        onSwitchToPassword={() => {
+          setFaceModal((prev) => ({ ...prev, open: false }));
+          setStartupSubView('password');
+          setStartupPhase('choose-unlock');
+        }}
         onEnrollComplete={handleFaceEnrollComplete}
         onVerifySuccess={handleFaceVerifySuccess}
       />
       <StartupLoadingModal
         phase={startupPhase}
         statusDetail={startupDetail}
+        availableVaults={availableVaults}
+        initialVaultId={initialVaultId}
+        faceEnrolledVaultIds={faceVaultIds}
+        cameraSupported={cameraCapabilities.supported}
+        unlockReason={startupUnlockReason}
+        lockNotice={lockNotice}
+        initialSubView={startupSubView}
         onSkipWait={handleSkipStartupWait}
+        onChooseFaceUnlock={(targetId, mode) => {
+          setStartupSubView('select');
+          setStartupPhase('idle');
+          handleOpenFaceUnlock(targetId, mode);
+        }}
+        onSubmitPasswordUnlock={async ({ vaultId: targetId, passphrase: pw, storageMode: mode }) => {
+          await handleUnlockVault({
+            vaultId: targetId,
+            passphrase: pw,
+            storageMode: mode,
+            trustDevice: trustDeviceRef.current,
+          });
+          setStartupSubView('select');
+          setStartupPhase('idle');
+        }}
       />
       <OfflineIndicator />
       <BottomToastHost toasts={toasts} onDismiss={dismissToast} />

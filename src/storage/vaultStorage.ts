@@ -12,11 +12,18 @@ import {
   saveCloudVault,
 } from './cloudVault';
 import {
+  addBrowserKnownVaultId,
   clearCookieEnvelope,
+  getActiveVaultIdPref,
+  getBrowserKnownVaultIds,
   listCookieVaultSummaries,
   readCookieEnvelope,
+  removeBrowserKnownVaultId,
   writeCookieEnvelope,
 } from './cookieVault';
+import { mergeScopedAvailableVaults } from './vaultScope';
+
+export { mergeScopedAvailableVaults };
 
 export interface ServerHealthStatus {
   available: boolean;
@@ -60,33 +67,17 @@ export async function checkServerHealth(): Promise<ServerHealthStatus> {
 
 export async function listAvailableVaults(user?: User | null): Promise<VaultSummary[]> {
   const cookieList = listCookieVaultSummaries();
-  const byId = new Map<string, VaultSummary>();
-
-  for (const item of cookieList) {
-    byId.set(item.vaultId, item);
-  }
+  let cloudList: VaultSummary[] = [];
 
   if (user) {
     try {
-      const cloudList = await listCloudVaults(user.uid);
-      for (const cl of cloudList) {
-        const existing = byId.get(cl.vaultId);
-        if (existing) {
-          byId.set(cl.vaultId, {
-            vaultId: cl.vaultId,
-            updatedAt: cl.revision >= existing.revision ? cl.updatedAt : existing.updatedAt,
-            revision: Math.max(cl.revision, existing.revision),
-            source: 'cloud',
-          });
-        } else {
-          byId.set(cl.vaultId, cl);
-        }
-      }
+      cloudList = await listCloudVaults(user.uid);
     } catch {
-      // Cloud list failed — keep local/cookie list
+      cloudList = [];
     }
   }
 
+  let serverList: Array<{ vaultId: string; updatedAt: string; revision: number }> = [];
   try {
     const res = await fetch('/api/vaults', {
       method: 'GET',
@@ -97,33 +88,19 @@ export async function listAvailableVaults(user?: User | null): Promise<VaultSumm
       const data = (await res.json()) as {
         vaults: Array<{ vaultId: string; updatedAt: string; revision: number }>;
       };
-      for (const srv of data.vaults ?? []) {
-        const existing = byId.get(srv.vaultId);
-        if (existing) {
-          byId.set(srv.vaultId, {
-            vaultId: srv.vaultId,
-            updatedAt:
-              srv.revision >= existing.revision ? srv.updatedAt : existing.updatedAt,
-            revision: Math.max(srv.revision, existing.revision),
-            source: existing.source === 'cloud' ? 'cloud' : 'both',
-          });
-        } else {
-          byId.set(srv.vaultId, {
-            vaultId: srv.vaultId,
-            updatedAt: srv.updatedAt,
-            revision: srv.revision,
-            source: 'server',
-          });
-        }
-      }
+      serverList = data.vaults ?? [];
     }
   } catch {
-    // Server unreachable — cookie/cloud summaries remain intact
+    serverList = [];
   }
 
-  return Array.from(byId.values()).sort(
-    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-  );
+  return mergeScopedAvailableVaults({
+    cookieVaults: cookieList,
+    cloudVaults: cloudList,
+    serverVaults: serverList,
+    browserKnownVaultIds: getBrowserKnownVaultIds(),
+    activeVaultId: getActiveVaultIdPref(),
+  });
 }
 
 export async function loadEncryptedVault(
@@ -198,6 +175,7 @@ export async function saveEncryptedVault(
   mode: StorageMode = 'auto',
   user?: User | null
 ): Promise<StorageSyncResult> {
+  addBrowserKnownVaultId(envelope.vaultId);
   if (mode === 'cookie') {
     const cookieRes = writeCookieEnvelope(envelope);
     return {
@@ -300,6 +278,7 @@ export async function deleteVaultEverywhere(
   vaultId: string,
   user?: User | null
 ): Promise<void> {
+  removeBrowserKnownVaultId(vaultId);
   clearCookieEnvelope(vaultId);
   if (user) {
     try {

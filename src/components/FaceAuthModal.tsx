@@ -11,7 +11,10 @@ import {
 } from 'lucide-react';
 import {
   areEnrollmentSamplesConsistent,
-  STRONG_SINGLE_MATCH_THRESHOLD,
+  MAX_ENROLLMENT_SAMPLE_SPREAD,
+  PASS_CONFIDENCE_PCT,
+  REQUIRED_CONSECUTIVE_MATCHES,
+  REQUIRED_ENROLL_SAMPLES,
 } from '../crypto/faceAuthMath';
 import {
   detectLiveFace,
@@ -33,7 +36,9 @@ interface FaceAuthModalProps {
   mode: 'enroll' | 'verify';
   vaultId: string;
   vaultName?: string;
+  lockNotice?: string | null;
   onClose: () => void;
+  onSwitchToPassword?: () => void;
   onEnrollComplete?: (samples: number[][]) => Promise<void>;
   onVerifySuccess?: (session: {
     key: CryptoKey;
@@ -43,14 +48,14 @@ interface FaceAuthModalProps {
   }) => Promise<void>;
 }
 
-const REQUIRED_ENROLL_SAMPLES = 3;
-
 export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
   open,
   mode,
   vaultId,
   vaultName,
+  lockNotice,
   onClose,
+  onSwitchToPassword,
   onEnrollComplete,
   onVerifySuccess,
 }) => {
@@ -223,8 +228,8 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
         setPhase('scanning');
         setStatusText(
           mode === 'enroll'
-            ? '枠内に顔を映してください（自動で3サンプル取得します）'
-            : '登録済みの顔と照合しています。カメラ正面をご覧ください'
+            ? `枠内に顔を映してください（高精度プロファイルのため${REQUIRED_ENROLL_SAMPLES}サンプル取得）`
+            : `登録済みの顔と厳格照合します（一致度${PASS_CONFIDENCE_PCT}%以上 · 連続${REQUIRED_CONSECUTIVE_MATCHES}回一致で解除）`
         );
 
         const collectedSamples: number[][] = [];
@@ -242,7 +247,17 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
             const live = await detectLiveFace(v);
             if (cancelledRef.current) return;
 
-            if (!live) {
+            if (live.status === 'multiple-faces') {
+              setFaceDetected(false);
+              drawOverlay(null, false);
+              consecutiveMatches = 0;
+              setConfidencePct(null);
+              setStatusText('複数の顔が検出されました。ご本人のみが正面に映ってください');
+              loopTimer = window.setTimeout(() => void scanTick(), 220);
+              return;
+            }
+
+            if (live.status === 'no-face' || !live.box || !live.landmarks || !live.descriptor) {
               setFaceDetected(false);
               drawOverlay(null, false);
               if (mode === 'verify') {
@@ -256,41 +271,50 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
               return;
             }
 
+            if (live.status === 'too-small' || live.status === 'low-quality') {
+              setFaceDetected(true);
+              drawOverlay({ box: live.box, landmarks: live.landmarks }, false);
+              consecutiveMatches = 0;
+              setConfidencePct(null);
+              setStatusText(
+                live.status === 'too-small'
+                  ? 'もう少しカメラに近づいて正面を向いてください'
+                  : '顔をもう少し明るく鮮明に映してください'
+              );
+              loopTimer = window.setTimeout(() => void scanTick(), 200);
+              return;
+            }
+
             setFaceDetected(true);
+            const liveVisual = { box: live.box, landmarks: live.landmarks };
 
             if (mode === 'enroll') {
-              drawOverlay(live, false);
-              if (live.score < 0.52) {
-                setStatusText('顔をもう少しはっきり映してください');
-                loopTimer = window.setTimeout(() => void scanTick(), 200);
-                return;
-              }
-
+              drawOverlay(liveVisual, false);
               collectedSamples.push(live.descriptor);
               if (
                 collectedSamples.length >= 2 &&
-                !areEnrollmentSamplesConsistent(collectedSamples)
+                !areEnrollmentSamplesConsistent(collectedSamples, MAX_ENROLLMENT_SAMPLE_SPREAD)
               ) {
                 collectedSamples.length = 0;
                 setSampleProgress(0);
-                setStatusText('ブレが検出されました。動かずに正面を向いてください...');
-                loopTimer = window.setTimeout(() => void scanTick(), 300);
+                setStatusText('角度や照明のブレを検出しました。正面で静止してください...');
+                loopTimer = window.setTimeout(() => void scanTick(), 280);
                 return;
               }
 
               setSampleProgress(collectedSamples.length);
               setStatusText(
-                `顔特徴ベクトルを抽出中 (${collectedSamples.length} / ${REQUIRED_ENROLL_SAMPLES})...`
+                `高精度128次元特徴を抽出中 (${collectedSamples.length} / ${REQUIRED_ENROLL_SAMPLES})...`
               );
 
               if (collectedSamples.length >= REQUIRED_ENROLL_SAMPLES) {
-                drawOverlay(live, true);
+                drawOverlay(liveVisual, true);
                 setPhase('completing');
-                setStatusText('128次元特徴データと暗号鍵を安全に紐付け中...');
+                setStatusText('高精度顔プロファイルと暗号鍵を安全に紐付け中...');
                 await onEnrollCompleteRef.current?.(collectedSamples);
                 if (cancelledRef.current) return;
                 setPhase('success');
-                setStatusText('Web顔認証の登録が完了しました');
+                setStatusText('高精度Web顔認証の登録が完了しました');
                 stopCamera();
                 window.setTimeout(() => {
                   if (!cancelledRef.current) onCloseRef.current();
@@ -302,21 +326,18 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
               return;
             }
 
-            // mode === 'verify'
+            // mode === 'verify': strict centroid + cosine similarity + 3 consecutive frames >= 90%
             const outcome = await verifyLiveDescriptorForVault(vaultId, live.descriptor);
             if (cancelledRef.current) return;
 
             setConfidencePct(outcome.confidencePct);
-            drawOverlay(live, outcome.matched);
+            drawOverlay(liveVisual, outcome.matched);
 
             if (outcome.matched && outcome.session) {
               consecutiveMatches += 1;
-              if (
-                outcome.bestDistance <= STRONG_SINGLE_MATCH_THRESHOLD ||
-                consecutiveMatches >= 2
-              ) {
+              if (consecutiveMatches >= REQUIRED_CONSECUTIVE_MATCHES) {
                 setPhase('completing');
-                setStatusText(`本人確認完了 (一致度 ${outcome.confidencePct}%) — ボルトを復号中...`);
+                setStatusText(`厳格本人確認完了 (一致度 ${outcome.confidencePct}%) — ボルトを復号中...`);
                 await onVerifySuccessRef.current?.({
                   ...outcome.session,
                   confidencePct: outcome.confidencePct,
@@ -326,11 +347,13 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
                 stopCamera();
                 return;
               }
-              setStatusText(`一致を確認中... (${outcome.confidencePct}%)`);
+              setStatusText(
+                `厳格照合一致 (${outcome.confidencePct}% · 確認 ${consecutiveMatches}/${REQUIRED_CONSECUTIVE_MATCHES})...`
+              );
             } else {
               consecutiveMatches = 0;
               setStatusText(
-                `照合中 (一致度 ${outcome.confidencePct}%) — 登録時と同じ角度で正面をご覧ください`
+                `一致度 ${outcome.confidencePct}% (解除には${PASS_CONFIDENCE_PCT}%以上が必要) — 本人の顔のみを正面に映してください`
               );
             }
           } catch (err) {
@@ -379,6 +402,16 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
     onClose();
   };
 
+  const handleSwitchToPassword = () => {
+    cancelledRef.current = true;
+    stopCamera();
+    if (onSwitchToPassword) {
+      onSwitchToPassword();
+    } else {
+      onClose();
+    }
+  };
+
   return (
     <AnimatePresence>
       {open && (
@@ -415,7 +448,7 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
                       ? 'Webカメラ顔認証を登録'
                       : 'Webカメラ顔認証でロック解除'}
                   </h2>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
                     端末OSに依存しないブラウザ完結型AI顔認識 · ボルト「{vaultName || vaultId}」
                   </p>
                 </div>
@@ -429,6 +462,15 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
                 <X className="w-4 h-4" aria-hidden="true" />
               </button>
             </div>
+
+            {mode === 'verify' && lockNotice && (
+              <div
+                role="status"
+                className="p-2.5 rounded-2xl border border-amber-400/45 bg-amber-500/12 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed"
+              >
+                {lockNotice}
+              </div>
+            )}
 
             {/* Camera Viewfinder */}
             <div className="relative aspect-[4/3] w-full rounded-2xl overflow-hidden bg-slate-900/90 border border-white/20 shadow-inner flex items-center justify-center">
@@ -486,8 +528,14 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
                     {faceDetected ? '顔を検出中' : '待機中'}
                   </span>
                   {mode === 'verify' && confidencePct !== null && (
-                    <span className="px-2.5 py-1 rounded-lg bg-slate-950/65 backdrop-blur-md text-[11px] font-mono tabular-nums text-white">
-                      一致度 {confidencePct}%
+                    <span
+                      className={`px-2.5 py-1 rounded-lg backdrop-blur-md text-[11px] font-mono tabular-nums text-white ${
+                        confidencePct >= PASS_CONFIDENCE_PCT
+                          ? 'bg-emerald-600/80'
+                          : 'bg-rose-600/80'
+                      }`}
+                    >
+                      一致度 {confidencePct}% / 基準{PASS_CONFIDENCE_PCT}%
                     </span>
                   )}
                 </div>
@@ -526,10 +574,11 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
             <div className="flex items-center justify-end gap-2">
               <button
                 type="button"
-                onClick={handleClose}
+                data-testid={mode === 'verify' ? 'face-switch-password-btn' : undefined}
+                onClick={mode === 'verify' ? handleSwitchToPassword : handleClose}
                 className="px-4 py-2 text-xs font-semibold rounded-xl glass-btn text-slate-700 dark:text-slate-200"
               >
-                {mode === 'verify' ? 'パスフレーズで解除に戻る' : 'キャンセル'}
+                {mode === 'verify' ? 'パスワードで解除に切替' : 'キャンセル'}
               </button>
             </div>
           </motion.div>
