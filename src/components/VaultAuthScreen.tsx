@@ -29,6 +29,10 @@ import {
 import type { ServerHealthStatus } from '../storage/vaultStorage';
 import { sanitizeVaultId } from '../storage/vaultStorage';
 import type { EncryptedEnvelope, StorageMode, VaultSummary } from '../types/vault';
+import {
+  computeAuthScreenDefaults,
+  resolveAuthVaultStorageMode,
+} from '../utils/authScreenDefaults';
 import type { ToastTone } from './BottomToastHost';
 import { PWAInstallButton } from './PWAInstallButton';
 
@@ -118,6 +122,8 @@ export const VaultAuthScreen: React.FC<VaultAuthScreenProps> = ({
   const [startingDemo, setStartingDemo] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   const [copiedGen, setCopiedGen] = useState<boolean>(false);
+  const userEditedTabRef = React.useRef<boolean>(false);
+  const userEditedVaultIdRef = React.useRef<boolean>(false);
 
   const selectedCleanId = sanitizeVaultId(vaultId);
   const isFaceAuthReady =
@@ -126,26 +132,27 @@ export const VaultAuthScreen: React.FC<VaultAuthScreenProps> = ({
     faceVaultIds.includes(selectedCleanId);
 
   useEffect(() => {
-    if (googleUser) {
-      const cloudVault = availableVaults.find((v) => v.source === 'cloud');
-      if (cloudVault) {
-        setVaultId(cloudVault.vaultId);
-        setTab('unlock');
-      } else if (availableVaults.length === 0) {
-        setVaultId('cloud-main');
-        setVaultName('クラウド認証ボルト');
-        setTab('create');
-      }
-      return;
-    }
+    const decision = computeAuthScreenDefaults({
+      googleSignedIn: Boolean(googleUser),
+      availableVaults,
+      initialVaultId,
+      faceEnrolledVaultIds: faceVaultIds,
+      currentTab: tab,
+      currentVaultId: vaultId,
+      userEditedTab: userEditedTabRef.current,
+      userEditedVaultId: userEditedVaultIdRef.current,
+    });
 
-    if (initialVaultId) {
-      setVaultId(initialVaultId);
-      setTab('unlock');
-    } else if (availableVaults.length > 0 && !vaultId) {
-      setVaultId(availableVaults[0].vaultId);
+    if (decision.shouldUpdateTab) {
+      setTab(decision.nextTab);
     }
-  }, [googleUser, initialVaultId, availableVaults]);
+    if (decision.shouldUpdateVaultId) {
+      setVaultId(decision.nextVaultId);
+    }
+    if (decision.shouldUpdateVaultName) {
+      setVaultName(decision.nextVaultName);
+    }
+  }, [googleUser, initialVaultId, availableVaults, faceVaultIds]);
 
   const strength = evaluatePassphraseStrength(passphrase);
 
@@ -202,7 +209,12 @@ export const VaultAuthScreen: React.FC<VaultAuthScreenProps> = ({
       return;
     }
     setError('');
-    onOpenFaceUnlock(cleanId, storageMode);
+    const resolvedMode = resolveAuthVaultStorageMode(
+      cleanId,
+      availableVaults,
+      storageMode
+    );
+    onOpenFaceUnlock(cleanId, resolvedMode);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -304,6 +316,8 @@ export const VaultAuthScreen: React.FC<VaultAuthScreenProps> = ({
       setError(err instanceof Error ? err.message : 'ファイルの読み込みに失敗しました。');
       setImportedEnvelope(null);
       setImportFileName('');
+    } finally {
+      e.target.value = '';
     }
   };
 
@@ -475,7 +489,7 @@ export const VaultAuthScreen: React.FC<VaultAuthScreenProps> = ({
           initial={{ opacity: 0, y: 22, scale: 0.98 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           transition={{ type: 'spring', stiffness: 300, damping: 26, delay: 0.06 }}
-          className="lg:col-span-7 glass-modal rounded-3xl p-6 sm:p-8 space-y-6"
+          className="lg:col-span-7 glass-modal rounded-[28px] p-6 sm:p-8 space-y-6"
         >
           {/* Google Account Banner */}
           <div className="p-4 rounded-2xl glass-subtle">
@@ -615,7 +629,7 @@ export const VaultAuthScreen: React.FC<VaultAuthScreenProps> = ({
           <div
             role="tablist"
             aria-label="ボルト操作の切り替え"
-            className="grid grid-cols-3 gap-1 p-1 glass-subtle rounded-xl"
+            className="grid grid-cols-3 gap-1 p-1 glass-subtle rounded-2xl"
           >
             {(
               [
@@ -632,10 +646,11 @@ export const VaultAuthScreen: React.FC<VaultAuthScreenProps> = ({
                   role="tab"
                   aria-selected={active}
                   onClick={() => {
+                    userEditedTabRef.current = true;
                     setTab(item.id);
                     setError('');
                   }}
-                  className={`relative px-1.5 sm:px-3 py-2 text-[11px] sm:text-xs font-semibold rounded-lg transition-colors whitespace-nowrap truncate ${
+                  className={`relative px-1.5 sm:px-3 py-2 text-[11px] sm:text-xs font-semibold rounded-xl transition-colors whitespace-nowrap truncate ${
                     active
                       ? 'text-slate-900 dark:text-white'
                       : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
@@ -645,7 +660,7 @@ export const VaultAuthScreen: React.FC<VaultAuthScreenProps> = ({
                     <motion.span
                       layoutId="auth-mode-tab-pill"
                       transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-                      className="absolute inset-0 bg-white/90 dark:bg-white/15 backdrop-blur-md rounded-lg shadow-sm border border-white/80 dark:border-white/15"
+                      className="absolute inset-0 glass-pill-active rounded-xl"
                     />
                   )}
                   <span className="relative z-10">{item.label}</span>
@@ -751,7 +766,10 @@ export const VaultAuthScreen: React.FC<VaultAuthScreenProps> = ({
                           type="button"
                           whileHover={{ scale: 1.02 }}
                           whileTap={{ scale: 0.97 }}
-                          onClick={() => setVaultId(v.vaultId)}
+                          onClick={() => {
+                            userEditedVaultIdRef.current = true;
+                            setVaultId(v.vaultId);
+                          }}
                           className={`text-left px-3 py-2.5 rounded-xl transition-colors ${
                             selected
                               ? 'glass-subtle border-blue-500/70 bg-blue-500/12 dark:bg-blue-500/16'
@@ -799,7 +817,10 @@ export const VaultAuthScreen: React.FC<VaultAuthScreenProps> = ({
                     id="vault-id-input"
                     type="text"
                     value={vaultId}
-                    onChange={(e) => setVaultId(e.target.value)}
+                    onChange={(e) => {
+                      userEditedVaultIdRef.current = true;
+                      setVaultId(e.target.value);
+                    }}
                     placeholder="例: cloud-main"
                     className="w-full px-3 py-2 text-sm font-mono rounded-xl glass-input text-slate-900 dark:text-slate-100"
                     required

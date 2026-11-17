@@ -216,7 +216,7 @@ export const StartupLoadingModal: React.FC<StartupLoadingModalProps> = ({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.92, y: -16 }}
             transition={{ type: 'spring', stiffness: 360, damping: 26 }}
-            className="w-full max-w-md glass-modal rounded-3xl p-6 space-y-4"
+            className="w-full max-w-md glass-modal rounded-[26px] p-6 space-y-4"
           >
             {/* Header */}
             <div className="flex items-center gap-3.5">
@@ -289,14 +289,17 @@ export const StartupLoadingModal: React.FC<StartupLoadingModalProps> = ({
                         ))}
                       </select>
                     ) : (
-                      <div className="flex items-center gap-2 min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0">
                         <span className="text-xs font-mono font-semibold text-slate-900 dark:text-white truncate">
                           {effectiveVaultId}
                         </span>
                         {selectedSummary && (
-                          <span className="text-[10px] px-2 py-0.5 rounded-full glass-subtle text-slate-600 dark:text-slate-300 shrink-0">
-                            {formatSourceBadge(selectedSummary.source)}
-                          </span>
+                          <>
+                            <span aria-hidden="true" className="text-slate-400">·</span>
+                            <span className="text-[11px] text-slate-500 dark:text-slate-400 shrink-0">
+                              {formatSourceBadge(selectedSummary.source)}
+                            </span>
+                          </>
                         )}
                       </div>
                     )}
@@ -344,10 +347,10 @@ export const StartupLoadingModal: React.FC<StartupLoadingModalProps> = ({
                               Webカメラ顔認証で解除
                             </span>
                             <span
-                              className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                              className={`text-[11px] font-semibold shrink-0 ${
                                 isFaceEnrolled && cameraSupported
-                                  ? 'bg-white/20 text-white'
-                                  : 'bg-slate-900/10 dark:bg-white/10 text-slate-600 dark:text-slate-300'
+                                  ? 'text-blue-100'
+                                  : 'text-slate-500 dark:text-slate-400'
                               }`}
                             >
                               {!cameraSupported

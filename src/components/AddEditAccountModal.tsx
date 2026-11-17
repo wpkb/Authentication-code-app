@@ -80,8 +80,23 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
     setCameraActive(false);
   };
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        stopCamera();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, onClose]);
 
   useEffect(() => {
     if (!open) {
@@ -175,6 +190,8 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
       applyParsedUri(code.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'QRコードの解析に失敗しました。');
+    } finally {
+      e.target.value = '';
     }
   };
 
@@ -301,6 +318,12 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              stopCamera();
+              onClose();
+            }
+          }}
           className="fixed inset-0 z-50 bg-slate-950/35 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto"
         >
           <motion.div
@@ -309,7 +332,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.92, y: 18 }}
             transition={{ type: 'spring', stiffness: 360, damping: 28 }}
-            className="glass-modal rounded-3xl w-full max-w-xl p-6 space-y-5 my-8"
+            className="glass-modal rounded-[26px] w-full max-w-xl p-6 space-y-5 my-8"
           >
             <div className="flex items-center justify-between gap-4">
               <h2
@@ -358,7 +381,7 @@ export const AddEditAccountModal: React.FC<AddEditAccountModalProps> = ({
                         <motion.span
                           layoutId="add-edit-entry-tab"
                           transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-                          className="absolute inset-0 bg-white/90 dark:bg-white/15 backdrop-blur-md rounded-lg shadow-sm border border-white/80 dark:border-white/15"
+                          className="absolute inset-0 glass-pill-active rounded-xl"
                         />
                       )}
                       <span className="relative z-10">{item.label}</span>

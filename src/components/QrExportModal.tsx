@@ -41,6 +41,15 @@ export const QrExportModal: React.FC<QrExportModalProps> = ({
       .catch(() => setQrDataUrl(''));
   }, [account]);
 
+  useEffect(() => {
+    if (!account) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [account, onClose]);
+
   const handleCopyUri = async () => {
     if (!account) return;
     const uri = buildOtpAuthUri(account);
@@ -66,6 +75,9 @@ export const QrExportModal: React.FC<QrExportModalProps> = ({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) onClose();
+          }}
           className="fixed inset-0 z-50 bg-slate-950/35 backdrop-blur-md flex items-center justify-center p-4"
         >
           <motion.div
@@ -74,7 +86,7 @@ export const QrExportModal: React.FC<QrExportModalProps> = ({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.92, y: 16 }}
             transition={{ type: 'spring', stiffness: 380, damping: 26 }}
-            className="glass-modal rounded-3xl w-full max-w-md p-6 space-y-5"
+            className="glass-modal rounded-[26px] w-full max-w-md p-6 space-y-5"
           >
             <div className="flex items-center justify-between gap-4">
               <div>
@@ -87,12 +99,11 @@ export const QrExportModal: React.FC<QrExportModalProps> = ({
               </div>
               <motion.button
                 type="button"
-                whileHover={{ scale: 1.12, rotate: 90 }}
-                whileTap={{ scale: 0.88 }}
-                transition={{ duration: 0.18 }}
+                whileHover={{ scale: 1.08 }}
+                whileTap={{ scale: 0.92 }}
                 onClick={onClose}
                 aria-label="QRモーダルを閉じる"
-                className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                className="p-1.5 rounded-xl glass-btn text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
               >
                 <X className="w-4 h-4" aria-hidden="true" />
               </motion.button>

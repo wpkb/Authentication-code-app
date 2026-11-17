@@ -45,7 +45,6 @@ import { SyncBackupView } from './components/SyncBackupView';
 import { TotpCard } from './components/TotpCard';
 import { VaultAuthScreen } from './components/VaultAuthScreen';
 import {
-  clearAllFaceVaultKeys,
   detectCameraCapabilities,
   getEnrolledFaceVaultIds,
   removeFaceForVault,
@@ -100,6 +99,7 @@ import type {
   VaultSummary,
 } from './types/vault';
 import { createDemoVaultPayload } from './utils/demoData';
+import { planDemoVaultStart } from './utils/demoVaultPolicy';
 import {
   clearAutoBackupsForVault,
   deleteAutoBackupSnapshot,
@@ -212,6 +212,8 @@ export default function App() {
   trustDeviceRef.current = trustDevice;
   const sessionOnlyLockRef = useRef<boolean>(sessionOnlyLock);
   sessionOnlyLockRef.current = sessionOnlyLock;
+  const envelopeRef = useRef<EncryptedEnvelope | null>(envelope);
+  envelopeRef.current = envelope;
   const envelopeRevisionRef = useRef<number>(0);
   envelopeRevisionRef.current = envelope?.revision ?? 0;
 
@@ -230,6 +232,18 @@ export default function App() {
   const [qrAccount, setQrAccount] = useState<TotpAccount | null>(null);
   const [recoveryAccountId, setRecoveryAccountId] = useState<string | null>(null);
   const [deletingAccount, setDeletingAccount] = useState<TotpAccount | null>(null);
+
+  useEffect(() => {
+    if (!deletingAccount && !mobileMenuOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (deletingAccount) setDeletingAccount(null);
+        else if (mobileMenuOpen) setMobileMenuOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [deletingAccount, mobileMenuOpen]);
 
   // Independent In-Web Camera Face Authentication state
   const [faceVaultIds, setFaceVaultIds] = useState<string[]>(() =>
@@ -598,8 +612,6 @@ export default function App() {
       await clearAllTrustedKeysForUser(uid);
       clearProfileSessionCache(uid);
     }
-    await clearAllFaceVaultKeys();
-    setFaceVaultIds([]);
     clearVaultLocked();
     clearUnlockedActivitySession();
     setLockNotice(null);
@@ -687,7 +699,7 @@ export default function App() {
     }
 
     const timer = window.setInterval(() => {
-      const currentEnv = envelope;
+      const currentEnv = envelopeRef.current;
       const currentVault = vaultRef.current;
       if (!currentEnv || !currentVault) return;
       void saveAutoBackupSnapshot({
@@ -712,7 +724,7 @@ export default function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [vault?.vaultId, envelope, autoBackupSettings.enabled, autoBackupSettings.frequency, pushToast]);
+  }, [vault?.vaultId, autoBackupSettings.enabled, autoBackupSettings.frequency, pushToast]);
 
   // Real-time Firestore cloud sync when unlocked
   useEffect(() => {
@@ -938,24 +950,45 @@ export default function App() {
       confidencePct: number;
     }) => {
       const targetVaultId = faceModal.vaultId;
-      const mode = faceModal.storageMode;
-      handleSelectStorageMode(mode);
-      const loaded = await loadEncryptedVault(targetVaultId, mode, googleUser);
-      if (!loaded.envelope) {
-        throw new Error(`ボルト "${targetVaultId}" が見つかりませんでした。`);
+      const requestedMode = faceModal.storageMode;
+      const modesToTry: StorageMode[] = Array.from(
+        new Set<StorageMode>([requestedMode, 'auto', 'cookie'])
+      );
+
+      let loadedEnv: EncryptedEnvelope | null = null;
+      let loadedSource: 'cloud' | 'server' | 'cookie' | null = null;
+      let decrypted: VaultPayload | null = null;
+      let resolvedMode: StorageMode = requestedMode;
+
+      for (const candidateMode of modesToTry) {
+        const loaded = await loadEncryptedVault(targetVaultId, candidateMode, googleUser);
+        if (!loaded.envelope) continue;
+        try {
+          decrypted = await decryptVaultWithKey(loaded.envelope, verifiedSession.key);
+          loadedEnv = loaded.envelope;
+          loadedSource = loaded.source;
+          resolvedMode =
+            loaded.source === 'cloud'
+              ? 'cloud'
+              : loaded.source === 'cookie' && candidateMode === 'cookie'
+              ? 'cookie'
+              : candidateMode;
+          break;
+        } catch {
+          // Try next storage candidate before reporting mismatch
+        }
       }
 
-      let decrypted: VaultPayload;
-      try {
-        decrypted = await decryptVaultWithKey(loaded.envelope, verifiedSession.key);
-      } catch {
-        const nextIds = await removeFaceForVault(targetVaultId);
-        setFaceVaultIds(nextIds);
+      if (!loadedEnv) {
+        throw new Error(`ボルト "${targetVaultId}" が見つかりませんでした。`);
+      }
+      if (!decrypted) {
         throw new Error(
-          'パスフレーズが変更されたためWeb顔認証鍵をリセットしました。マスターパスフレーズで解除後、再登録してください。'
+          'このボルトの暗号鍵が現在の顔認証データと一致しませんでした（パスフレーズ変更等）。マスターパスフレーズで解除後、必要に応じて再登録してください。'
         );
       }
 
+      handleSelectStorageMode(resolvedMode);
       const nowMs = Date.now();
       activeKeyRef.current = {
         key: verifiedSession.key,
@@ -969,21 +1002,21 @@ export default function App() {
       setStartupPhase('idle');
       setVault(decrypted);
       setPassphrase('');
-      setEnvelope(loaded.envelope);
+      setEnvelope(loadedEnv);
       setActiveVaultIdPref(decrypted.vaultId);
       setInitialVaultId(decrypted.vaultId);
       setSyncStatus({
         savedTo:
-          loaded.source === 'cloud'
+          loadedSource === 'cloud'
             ? 'cloud+cookie'
-            : loaded.source === 'server'
+            : loadedSource === 'server'
             ? 'server+cookie'
             : 'cookie-only',
-        cloudSynced: loaded.source === 'cloud',
-        serverSynced: loaded.source === 'server',
-        cookieSynced: loaded.source === 'cookie',
+        cloudSynced: loadedSource === 'cloud',
+        serverSynced: loadedSource === 'server',
+        cookieSynced: loadedSource === 'cookie',
         cookieTier: 'cookie',
-        cookieBytes: JSON.stringify(loaded.envelope).length,
+        cookieBytes: JSON.stringify(loadedEnv).length,
       });
       setActiveSection('all');
       setSelectedFolder(null);
@@ -1033,20 +1066,64 @@ export default function App() {
   const handleStartDemo = useCallback(async () => {
     setStartupPhase('idle');
     const demoPass = 'KagiVault-Demo#2026';
-    const demoPayload = createDemoVaultPayload('demo-vault');
+    const freshPayload = createDemoVaultPayload('demo-vault');
+
+    // Check if demo-vault already exists so we preserve existing salt, accounts, and enrolled Face Auth
+    const existingLoaded = await loadEncryptedVault('demo-vault', storageMode, googleUser);
+    let existingDecrypted: VaultPayload | null = null;
+    if (existingLoaded.envelope) {
+      try {
+        existingDecrypted = await decryptVault(existingLoaded.envelope, demoPass);
+      } catch {
+        existingDecrypted = null;
+      }
+    }
+
+    const plan = planDemoVaultStart({
+      existingEnvelope: existingLoaded.envelope,
+      existingDecrypted,
+      freshPayload,
+      defaultIterations: DEFAULT_PBKDF2_ITERATIONS,
+    });
+
     const derived = await deriveKeyAndSalt(
       demoPass,
-      undefined,
-      DEFAULT_PBKDF2_ITERATIONS
+      plan.saltB64,
+      plan.iterations
     );
     const nowMs = Date.now();
     activeKeyRef.current = derived;
     clearVaultLocked();
     lastActivityRef.current = nowMs;
-    recordUnlockedActivity(demoPayload.autoLockMinutes, nowMs);
+    recordUnlockedActivity(plan.payload.autoLockMinutes, nowMs);
     setLockNotice(null);
 
-    const res = await persistVault(demoPayload, derived, 1, storageMode);
+    if (plan.reuseExisting && existingLoaded.envelope) {
+      setVault(plan.payload);
+      setEnvelope(existingLoaded.envelope);
+      setActiveVaultIdPref(plan.payload.vaultId);
+      setInitialVaultId(plan.payload.vaultId);
+      setSyncStatus({
+        savedTo:
+          existingLoaded.source === 'cloud'
+            ? 'cloud+cookie'
+            : existingLoaded.source === 'server'
+            ? 'server+cookie'
+            : 'cookie-only',
+        cloudSynced: existingLoaded.source === 'cloud',
+        serverSynced: existingLoaded.source === 'server',
+        cookieSynced: existingLoaded.source === 'cookie',
+        cookieTier: 'cookie',
+        cookieBytes: JSON.stringify(existingLoaded.envelope).length,
+      });
+      setPassphrase(demoPass);
+      setActiveSection('all');
+      setSelectedFolder(null);
+      pushToast('保存済みのデモ用ボルトを再開しました（登録済みのアカウントと顔認証を保持）', 'success');
+      return;
+    }
+
+    const res = await persistVault(plan.payload, derived, plan.revision, storageMode);
     setPassphrase(demoPass);
     setActiveSection('all');
     setSelectedFolder(null);
@@ -1060,7 +1137,7 @@ export default function App() {
       })`,
       'success'
     );
-  }, [persistVault, storageMode, pushToast, clearVaultLocked]);
+  }, [persistVault, storageMode, googleUser, pushToast, clearVaultLocked]);
 
   // ?autostart=1 support (only runs if not explicitly locked/expired, and strips autostart from URL so reloads enforce lock)
   useEffect(() => {
@@ -1100,8 +1177,6 @@ export default function App() {
         pushToast(msg, 'warning');
       } else if (reason === 'session') {
         void clearAllTrustedKeys();
-        void clearAllFaceVaultKeys();
-        setFaceVaultIds([]);
         setLockNotice(
           '「離脱時自動ロック（Session Onlyモード）」が有効なため、ページ離脱・ブラウザ終了時にボルトを即時ロックしました。'
         );
@@ -1124,8 +1199,6 @@ export default function App() {
 
       if (wasSessionOnly && (!hadTabSession || pendingClosedLock)) {
         void clearAllTrustedKeys();
-        void clearAllFaceVaultKeys();
-        setFaceVaultIds([]);
         if (pendingClosedLock) {
           localStorage.removeItem(SESSION_CLOSED_LOCK_KEY);
           setLockNotice(
@@ -1153,7 +1226,6 @@ export default function App() {
         // ignore
       }
       void clearAllTrustedKeys();
-      void clearAllFaceVaultKeys();
       if (vaultRef.current || activeKeyRef.current) {
         lockVault('session');
       }
@@ -1783,7 +1855,7 @@ export default function App() {
             className="liquid-canvas min-h-screen text-slate-900 dark:text-slate-100 flex lg:gap-4 lg:p-4"
           >
             {/* Desktop Sidebar */}
-            <aside className="hidden lg:flex w-72 shrink-0 flex-col glass-surface rounded-3xl h-[calc(100vh-2rem)] sticky top-4 overflow-hidden">
+            <aside className="hidden lg:flex w-72 shrink-0 flex-col glass-surface rounded-[26px] h-[calc(100vh-2rem)] sticky top-4 overflow-hidden">
               <div className="px-5 py-4 border-b border-slate-900/8 dark:border-white/10 flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
                   <div className="w-7 h-7 rounded-xl glass-primary-btn flex items-center justify-center shrink-0">
@@ -1869,7 +1941,7 @@ export default function App() {
                     <motion.span
                       layoutId="sidebar-nav-active"
                       transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-                      className="absolute inset-0 rounded-xl bg-white/80 dark:bg-blue-500/20 backdrop-blur-md border border-white/80 dark:border-blue-400/25 shadow-sm"
+                      className="absolute inset-0 rounded-xl glass-pill-active"
                     />
                   )}
                   <span className="relative z-10 flex items-center gap-2.5">
@@ -1899,7 +1971,7 @@ export default function App() {
                     <motion.span
                       layoutId="sidebar-nav-active"
                       transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-                      className="absolute inset-0 rounded-xl bg-white/80 dark:bg-blue-500/20 backdrop-blur-md border border-white/80 dark:border-blue-400/25 shadow-sm"
+                      className="absolute inset-0 rounded-xl glass-pill-active"
                     />
                   )}
                   <span className="relative z-10 flex items-center gap-2.5">
@@ -1943,7 +2015,7 @@ export default function App() {
                               <motion.span
                                 layoutId="sidebar-nav-active"
                                 transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-                                className="absolute inset-0 rounded-xl bg-white/80 dark:bg-blue-500/20 backdrop-blur-md border border-white/80 dark:border-blue-400/25 shadow-sm"
+                                className="absolute inset-0 rounded-xl glass-pill-active"
                               />
                             )}
                             <span className="relative z-10 flex items-center gap-2 truncate">
@@ -1979,7 +2051,7 @@ export default function App() {
                       <motion.span
                         layoutId="sidebar-nav-active"
                         transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-                        className="absolute inset-0 rounded-xl bg-white/80 dark:bg-blue-500/20 backdrop-blur-md border border-white/80 dark:border-blue-400/25 shadow-sm"
+                        className="absolute inset-0 rounded-xl glass-pill-active"
                       />
                     )}
                     <span className="relative z-10 flex items-center gap-2.5">
@@ -2006,7 +2078,7 @@ export default function App() {
                       <motion.span
                         layoutId="sidebar-nav-active"
                         transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-                        className="absolute inset-0 rounded-xl bg-white/80 dark:bg-blue-500/20 backdrop-blur-md border border-white/80 dark:border-blue-400/25 shadow-sm"
+                        className="absolute inset-0 rounded-xl glass-pill-active"
                       />
                     )}
                     <span className="relative z-10 flex items-center gap-2.5">
@@ -2038,7 +2110,7 @@ export default function App() {
                       <motion.span
                         layoutId="sidebar-nav-active"
                         transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-                        className="absolute inset-0 rounded-xl bg-white/80 dark:bg-blue-500/20 backdrop-blur-md border border-white/80 dark:border-blue-400/25 shadow-sm"
+                        className="absolute inset-0 rounded-xl glass-pill-active"
                       />
                     )}
                     <span className="relative z-10 flex items-center gap-2.5">
@@ -2351,7 +2423,7 @@ export default function App() {
             {/* Main Content Area */}
             <div className="flex-1 flex flex-col min-w-0 lg:gap-4">
               {/* Top Bar Contract: 3 clean zones */}
-              <header className="sticky top-0 lg:top-4 z-30 glass-surface lg:rounded-2xl px-4 sm:px-6 py-3.5 flex items-center justify-between gap-3 sm:gap-6">
+              <header className="sticky top-0 lg:top-4 z-30 glass-surface lg:rounded-[22px] px-4 sm:px-6 py-3.5 flex items-center justify-between gap-3 sm:gap-6">
                 <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
                   <motion.button
                     type="button"
@@ -2446,7 +2518,7 @@ export default function App() {
                         initial={{ opacity: 0, y: -8 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -8 }}
-                        className="glass-surface rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-blue-400/35 bg-blue-500/8"
+                        className="glass-surface rounded-[22px] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-blue-400/35 bg-blue-500/8"
                       >
                         <div className="flex items-center gap-3 min-w-0">
                           <div className="w-9 h-9 rounded-xl glass-primary-btn flex items-center justify-center shrink-0">
@@ -2499,7 +2571,7 @@ export default function App() {
                           initial={{ opacity: 0, scale: 0.97 }}
                           animate={{ opacity: 1, scale: 1 }}
                           transition={{ type: 'spring', stiffness: 320, damping: 26 }}
-                          className="glass-surface rounded-2xl p-10 text-center space-y-4"
+                          className="glass-surface rounded-[24px] p-10 text-center space-y-4"
                         >
                           <div className="w-12 h-12 rounded-2xl glass-subtle flex items-center justify-center mx-auto">
                             <KeyRound className="w-6 h-6 text-slate-500 dark:text-slate-300" aria-hidden="true" />
@@ -2673,6 +2745,9 @@ export default function App() {
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.2 }}
+                  onClick={(e) => {
+                    if (e.target === e.currentTarget) setDeletingAccount(null);
+                  }}
                   className="fixed inset-0 z-50 bg-slate-950/35 backdrop-blur-md flex items-center justify-center p-4"
                 >
                   <motion.div
@@ -2681,7 +2756,7 @@ export default function App() {
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.92, y: 14 }}
                     transition={{ type: 'spring', stiffness: 360, damping: 28 }}
-                    className="glass-modal rounded-3xl w-full max-w-sm p-6 space-y-4"
+                    className="glass-modal rounded-[26px] w-full max-w-sm p-6 space-y-4"
                   >
                     <h2
                       id="delete-acc-title"
@@ -2729,6 +2804,9 @@ export default function App() {
         lockNotice={lockNotice}
         onClose={handleCloseFaceModal}
         onSwitchToPassword={() => {
+          if (faceModal.vaultId) {
+            setInitialVaultId(faceModal.vaultId);
+          }
           setFaceModal((prev) => ({ ...prev, open: false }));
           setStartupSubView('password');
           setStartupPhase('choose-unlock');

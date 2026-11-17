@@ -202,7 +202,7 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ type: 'spring', stiffness: 320, damping: 26 }}
-        className="glass-surface rounded-2xl p-6 space-y-5"
+        className="glass-surface rounded-[24px] p-6 space-y-5"
       >
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
@@ -301,7 +301,7 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ type: 'spring', stiffness: 320, damping: 26, delay: 0.06 }}
-        className="glass-surface rounded-2xl p-6 space-y-4"
+        className="glass-surface rounded-[24px] p-6 space-y-4"
       >
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="space-y-1">
@@ -390,7 +390,7 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ type: 'spring', stiffness: 320, damping: 26, delay: 0.1 }}
-          className="lg:col-span-7 glass-surface rounded-2xl p-6 space-y-4"
+          className="lg:col-span-7 glass-surface rounded-[24px] p-6 space-y-4"
         >
           <div>
             <h2 className="text-base font-bold text-slate-900 dark:text-white">
@@ -494,35 +494,42 @@ export const AutofillBridgeView: React.FC<AutofillBridgeViewProps> = ({
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ type: 'spring', stiffness: 320, damping: 26, delay: 0.14 }}
-          className="lg:col-span-5 glass-surface rounded-2xl p-6 space-y-4"
+          className="lg:col-span-5 glass-surface rounded-[24px] p-6 space-y-4"
         >
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-base font-bold text-slate-900 dark:text-white">
               自動入力テストフォーム
             </h2>
             <div className="flex items-center gap-1 p-1 glass-subtle rounded-xl text-[11px] font-semibold">
-              <button
-                type="button"
-                onClick={() => setFormInputMode('single')}
-                className={`px-2.5 py-1 rounded-lg transition-colors ${
-                  formInputMode === 'single'
-                    ? 'bg-white/90 dark:bg-white/15 text-slate-900 dark:text-white shadow-sm'
-                    : 'text-slate-500 dark:text-slate-400'
-                }`}
-              >
-                単一欄
-              </button>
-              <button
-                type="button"
-                onClick={() => setFormInputMode('split')}
-                className={`px-2.5 py-1 rounded-lg transition-colors ${
-                  formInputMode === 'split'
-                    ? 'bg-white/90 dark:bg-white/15 text-slate-900 dark:text-white shadow-sm'
-                    : 'text-slate-500 dark:text-slate-400'
-                }`}
-              >
-                6分割欄
-              </button>
+              {(
+                [
+                  { id: 'single', label: '単一欄' },
+                  { id: 'split', label: '6分割欄' },
+                ] as const
+              ).map((item) => {
+                const active = formInputMode === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setFormInputMode(item.id)}
+                    className={`relative px-2.5 py-1 rounded-lg transition-colors whitespace-nowrap ${
+                      active
+                        ? 'text-slate-900 dark:text-white'
+                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    {active && (
+                      <motion.span
+                        layoutId="autofill-form-mode-pill"
+                        transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+                        className="absolute inset-0 glass-pill-active rounded-lg"
+                      />
+                    )}
+                    <span className="relative z-10">{item.label}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 

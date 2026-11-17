@@ -195,7 +195,7 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ type: 'spring', stiffness: 320, damping: 26 }}
-        className="glass-surface rounded-2xl p-6 space-y-5"
+        className="glass-surface rounded-[24px] p-6 space-y-5"
       >
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
@@ -219,7 +219,7 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
           </motion.button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
           {[
             {
               id: 'cloud' as StorageMode,
@@ -357,7 +357,7 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ type: 'spring', stiffness: 320, damping: 26, delay: 0.06 }}
-          className="glass-surface rounded-2xl p-6 space-y-4 lg:col-span-2"
+          className="glass-surface rounded-[24px] p-6 space-y-4 lg:col-span-2"
         >
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-start gap-2.5">
@@ -518,9 +518,11 @@ export const SyncBackupView: React.FC<SyncBackupViewProps> = ({
                           <span className="font-mono font-semibold text-slate-900 dark:text-white tabular-nums">
                             {formattedDate}
                           </span>
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-700 dark:text-blue-300 font-medium">
+                          <span aria-hidden="true" className="text-slate-400">·</span>
+                          <span className="text-[11px] font-medium text-blue-700 dark:text-blue-300">
                             {reasonLabel}
                           </span>
+                          <span aria-hidden="true" className="text-slate-400">·</span>
                           <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 tabular-nums">
                             Rev.{snap.revision} · {snap.accountCount}件 · {(snap.bytes / 1024).toFixed(1)} KB
                           </span>

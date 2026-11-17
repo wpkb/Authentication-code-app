@@ -135,7 +135,7 @@ async function startServer() {
     } catch (err) {
       const nodeErr = err as NodeJS.ErrnoException;
       if (nodeErr.code === 'ENOENT') {
-        res.status(404).json({ exists: false, error: 'ボルトが見つかりません。' });
+        res.json({ exists: false, envelope: null });
         return;
       }
       res.status(500).json({ error: 'ボルトの読み込みに失敗しました。' });

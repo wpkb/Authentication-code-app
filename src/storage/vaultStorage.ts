@@ -143,8 +143,13 @@ export async function loadEncryptedVault(
       });
       if (res.ok) {
         serverAvailable = true;
-        const data = (await res.json()) as { envelope: EncryptedEnvelope };
-        serverCopy = data.envelope;
+        const data = (await res.json()) as {
+          exists?: boolean;
+          envelope?: EncryptedEnvelope | null;
+        };
+        if (data.exists !== false && data.envelope) {
+          serverCopy = data.envelope;
+        }
       } else if (res.status === 404) {
         serverAvailable = true;
       }

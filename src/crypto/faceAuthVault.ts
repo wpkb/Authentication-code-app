@@ -322,6 +322,15 @@ export async function saveEnrolledFaceForVault(params: {
     throw new Error('顔特徴データのサンプルが取得できませんでした。');
   }
 
+  // Ask browser for durable IndexedDB storage so enrolled templates survive reloads/restarts
+  try {
+    if (typeof navigator !== 'undefined' && navigator.storage?.persist) {
+      void navigator.storage.persist().catch(() => {});
+    }
+  } catch {
+    // ignore unsupported environments
+  }
+
   const centroid = averageDescriptors(params.samples);
   const record: InWebFaceVaultRecord = {
     vaultId: params.vaultId,
@@ -341,9 +350,13 @@ export async function saveEnrolledFaceForVault(params: {
     store.put(record);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error('IndexedDB write aborted'));
   });
   db.close();
 
+  // Immediately persist index in localStorage and verify round-trip from IndexedDB
+  const nextLocal = Array.from(new Set([...getEnrolledFaceVaultIds(), params.vaultId]));
+  saveEnrolledFaceVaultIds(nextLocal);
   return await syncEnrolledFaceVaultIds();
 }
 
@@ -378,9 +391,7 @@ export async function verifyLiveDescriptorForVault(
 ): Promise<FaceVerifyOutcome> {
   const record = await getEnrolledFaceRecord(vaultId);
   if (!record) {
-    saveEnrolledFaceVaultIds(
-      getEnrolledFaceVaultIds().filter((id) => id !== vaultId)
-    );
+    await syncEnrolledFaceVaultIds();
     throw new Error(
       'このブラウザにボルトのWeb顔認証データが登録されていません。パスフレーズで解除後、再登録してください。'
     );

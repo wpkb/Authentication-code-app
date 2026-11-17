@@ -396,11 +396,22 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
     stopCamera,
   ]);
 
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
     cancelledRef.current = true;
     stopCamera();
-    onClose();
-  };
+    onCloseRef.current();
+  }, [stopCamera]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handleClose();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, handleClose]);
 
   const handleSwitchToPassword = () => {
     cancelledRef.current = true;
@@ -427,6 +438,9 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) handleClose();
+          }}
           className="fixed inset-0 z-50 bg-slate-950/50 backdrop-blur-md flex items-center justify-center p-4"
         >
           <motion.div
@@ -435,7 +449,7 @@ export const FaceAuthModal: React.FC<FaceAuthModalProps> = ({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.94, y: 14 }}
             transition={{ type: 'spring', stiffness: 360, damping: 28 }}
-            className="glass-modal rounded-3xl w-full max-w-md p-5 sm:p-6 space-y-4 text-slate-900 dark:text-slate-100"
+            className="glass-modal rounded-[26px] w-full max-w-md p-5 sm:p-6 space-y-4 text-slate-900 dark:text-slate-100"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-2.5 min-w-0">
